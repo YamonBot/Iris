@@ -182,18 +182,23 @@ class ObserverHelper(
     }
 
     private fun getStringJsonToMap(data: String?): MutableMap<String, Any?> {
-        if(data == null) return HashMap()
-        val object_ = JSONObject(data)
-        val map: MutableMap<String, Any?> = HashMap()
+        if (data.isNullOrEmpty()) return HashMap()
+        try {
+            val object_ = JSONObject(data)
+            val map: MutableMap<String, Any?> = HashMap()
 
-        val keys: MutableIterator<String> = object_.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            val value: Any? = object_.get(key)
-            map[key] = value
+            val keys: MutableIterator<String> = object_.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val value: Any? = object_.get(key)
+                map[key] = value
+            }
+
+            return map
+        } catch (e: Exception) {
+            println("failed to parse JSON to map: $e")
+            return HashMap()
         }
-
-        return map
     }
 
     private fun getNewLogCountFromDB(): Int {

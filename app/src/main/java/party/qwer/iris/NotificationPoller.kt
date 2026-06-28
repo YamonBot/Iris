@@ -81,7 +81,6 @@ class NotificationPoller {
             processedNotifications[key] = postTime
 
             if (senderId.isNotEmpty() && !cachedSenderIds.contains(senderId)) {
-                // Assuming NamesDB is implemented elsewhere
                 NamesDB.saveName(senderId, senderName, room)
                 cachedSenderIds.add(senderId)
             }
