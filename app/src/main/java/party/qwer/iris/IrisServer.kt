@@ -37,6 +37,7 @@ import kotlinx.serialization.json.jsonObject
 import party.qwer.iris.model.AotResponse
 import party.qwer.iris.model.ApiResponse
 import party.qwer.iris.model.CommonErrorResponse
+import party.qwer.iris.model.ChatIdentityResponse
 import party.qwer.iris.model.ConfigRequest
 import party.qwer.iris.model.ConfigResponse
 import party.qwer.iris.model.DashboardStatusResponse
@@ -230,6 +231,26 @@ class IrisServer(
 
                         call.respond(ApiResponse(success = true, message = "success"))
                     }
+                }
+
+                get("/identity/{chatId}/{userId}") {
+                    val chatId = call.parameters["chatId"]?.toLongOrNull()
+                    val userId = call.parameters["userId"]?.toLongOrNull()
+                    if (chatId == null || chatId <= 0 || userId == null || userId <= 0) {
+                        return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            CommonErrorResponse(message = "chatId and userId must be positive integers"),
+                        )
+                    }
+                    val identity = kakaoDB.resolveChatIdentity(chatId, userId)
+                    call.respond(
+                        ChatIdentityResponse(
+                            room_name = identity.roomName,
+                            actor_name = identity.actorName,
+                            is_group = identity.isGroup,
+                            is_open_chat = identity.isOpenChat,
+                        )
+                    )
                 }
 
                 get("/aot") {
