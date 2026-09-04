@@ -127,17 +127,22 @@ class ReplyDispatcher(
 
     private suspend fun process(command: ReplyCommand, recovered: ReplyRecord?): ReplyReceipt {
         val fingerprint = command.fingerprint()
-        if (recovered?.status == ReplyStatus.PROCESSING && recovered.baselineLogId != null) {
-            val reconciledLogId = commitProbe.awaitOwnRow(command, recovered.baselineLogId)
-            if (reconciledLogId != null) {
-                val reconciled = recovered.copy(
-                    status = ReplyStatus.KAKAO_DB_COMMITTED,
-                    kakaoLogId = reconciledLogId,
-                    message = null,
-                )
-                ledger.save(reconciled)
-                return reconciled.toReceipt().copy(duplicate = true)
+        if (recovered?.status == ReplyStatus.PROCESSING) {
+            val reconciledLogId = recovered.baselineLogId?.let {
+                commitProbe.awaitOwnRow(command, it)
             }
+            // A crash may occur after Kakao accepted the intent but before its row appeared.
+            // Absence of commit evidence cannot authorize another external side effect.
+            val reconciled = recovered.copy(
+                status = if (reconciledLogId != null) ReplyStatus.KAKAO_DB_COMMITTED
+                    else ReplyStatus.KAKAO_DB_UNCONFIRMED,
+                kakaoLogId = reconciledLogId,
+                message = if (reconciledLogId == null)
+                    "Recovered attempted reply has no commit evidence; not resent to avoid a duplicate"
+                    else null,
+            )
+            ledger.save(reconciled)
+            return reconciled.toReceipt().copy(duplicate = true)
         }
         val baseline = commitProbe.latestLogId()
         ledger.save(

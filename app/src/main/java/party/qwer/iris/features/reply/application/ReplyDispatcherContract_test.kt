@@ -107,7 +107,7 @@ class ReplyDispatcherTest {
     }
 
     @Test
-    fun `reconciles a processing record before considering resend`() = runBlocking {
+    fun `reconciles a processing record without resending`() = runBlocking {
         val command = ReplyCommand(
             ReplyRequestId("reply-test-recovery"), 7, null, ReplyPayload.Text("hello")
         )
