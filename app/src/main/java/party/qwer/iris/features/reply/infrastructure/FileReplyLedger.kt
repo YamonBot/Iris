@@ -8,6 +8,7 @@ import party.qwer.iris.features.reply.domain.ReplyRecord
 import party.qwer.iris.features.reply.domain.ReplyRequestId
 import party.qwer.iris.features.reply.domain.ReplyStatus
 import java.io.File
+import java.io.FileOutputStream
 
 /** Append-only local idempotency ledger that survives Iris restarts. */
 class FileReplyLedger(private val file: File) : ReplyLedger {
@@ -27,9 +28,8 @@ class FileReplyLedger(private val file: File) : ReplyLedger {
     init {
         if (file.exists()) {
             file.forEachLine { line ->
-                runCatching { json.decodeFromString<StoredRecord>(line).toDomain() }
-                    .onSuccess { records[it.requestId.value] = it }
-                    .onFailure { System.err.println("Ignoring invalid reply ledger record") }
+                val record = json.decodeFromString<StoredRecord>(line).toDomain()
+                records[record.requestId.value] = record
             }
         }
     }
@@ -48,7 +48,10 @@ class FileReplyLedger(private val file: File) : ReplyLedger {
             record.kakaoLogId,
             record.message,
         )
-        file.appendText(json.encodeToString(stored) + "\n")
+        FileOutputStream(file, true).use { output ->
+            output.write((json.encodeToString(stored) + "\n").encodeToByteArray())
+            output.fd.sync()
+        }
         records[record.requestId.value] = record
     }
 

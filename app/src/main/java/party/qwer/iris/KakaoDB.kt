@@ -51,12 +51,23 @@ class KakaoDB {
         "SELECT COALESCE(MAX(_id), 0) FROM chat_logs", null
     ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
 
-    /** First local own-message row committed in a room after a sequence boundary. */
-    fun findOwnChatLogAfter(chatId: Long, afterLogId: Long): Long? = connection.rawQuery(
-        "SELECT _id FROM chat_logs WHERE _id > ? AND chat_id = ? " +
-            "AND v LIKE '%\"isMine\":true%' ORDER BY _id ASC LIMIT 1",
-        arrayOf(afterLogId.toString(), chatId.toString()),
-    ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
+    /** First exact own-text row committed in a room after a sequence boundary. */
+    fun findOwnTextChatLogAfter(chatId: Long, afterLogId: Long, text: String): Long? {
+        val rows = executeQuery(
+            "SELECT _id, user_id, message, v FROM chat_logs WHERE _id > ? AND chat_id = ? " +
+                "ORDER BY _id ASC LIMIT 64",
+            arrayOf(afterLogId.toString(), chatId.toString()),
+        )
+        return rows.asSequence()
+            .filter {
+                runCatching { JSONObject(it["v"] ?: "{}").optBoolean("isMine") }
+                    .getOrDefault(false)
+            }
+            .map(::decryptRow)
+            .firstOrNull { it["message"] == text }
+            ?.get("_id")
+            ?.toLongOrNull()
+    }
 
     /** Read and decrypt one chat-log row by local sequence id. */
     fun findChatLog(logId: Long): Map<String, String?>? {

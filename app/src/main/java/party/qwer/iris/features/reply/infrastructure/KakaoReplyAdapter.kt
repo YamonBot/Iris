@@ -19,10 +19,15 @@ class KakaoReplySenderAdapter(private val notificationReferer: String) : KakaoRe
                 command.threadId,
             )
 
-            is ReplyPayload.Images -> Replier.sendImagesNow(
-                command.roomId,
-                payload.base64Values,
-            )
+            is ReplyPayload.Images -> {
+                require(command.threadId == null) {
+                    "threaded image replies are not supported"
+                }
+                Replier.sendImagesNow(
+                    command.roomId,
+                    payload.base64Values,
+                )
+            }
         }
     }
 }
@@ -35,10 +40,13 @@ class KakaoReplyCommitProbeAdapter(
 ) : KakaoReplyCommitProbe {
     override fun latestLogId(): Long = kakaoDB.latestChatLogId()
 
-    override suspend fun awaitOwnRow(roomId: Long, afterLogId: Long): Long? {
+    override suspend fun awaitOwnRow(command: ReplyCommand, afterLogId: Long): Long? {
+        val expectedText = (command.payload as? ReplyPayload.Text)?.value ?: return null
         val deadline = System.currentTimeMillis() + timeoutMillis
         while (System.currentTimeMillis() < deadline) {
-            kakaoDB.findOwnChatLogAfter(roomId, afterLogId)?.let { return it }
+            kakaoDB.findOwnTextChatLogAfter(command.roomId, afterLogId, expectedText)?.let {
+                return it
+            }
             delay(pollingMillis)
         }
         return null

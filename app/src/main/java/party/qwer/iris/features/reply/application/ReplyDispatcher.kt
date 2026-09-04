@@ -35,6 +35,7 @@ class ReplyDispatcher(
         val command: ReplyCommand,
         val ready: CompletableDeferred<Unit>,
         val receipt: CompletableDeferred<ReplyReceipt>,
+        val recovered: ReplyRecord?,
     )
 
     private val queue = Channel<Work>(queueCapacity)
@@ -44,9 +45,21 @@ class ReplyDispatcher(
     init {
         scope.launch {
             for (work in queue) {
-                work.ready.await()
+                try {
+                    work.ready.await()
+                } catch (error: Throwable) {
+                    work.receipt.complete(
+                        ReplyReceipt(
+                            work.command.requestId,
+                            ReplyStatus.SEND_FAILED,
+                            message = error.message ?: error::class.java.simpleName,
+                        )
+                    )
+                    mutex.withLock { inFlight.remove(work.command.requestId.value) }
+                    continue
+                }
                 val receipt = try {
-                    process(work.command)
+                    process(work.command, work.recovered)
                 } catch (error: Throwable) {
                     ReplyReceipt(
                         work.command.requestId,
@@ -64,11 +77,9 @@ class ReplyDispatcher(
     /** Submit one command or replay its existing idempotent result. */
     suspend fun dispatch(command: ReplyCommand): ReplyReceipt {
         val fingerprint = command.fingerprint()
-        val existing = ledger.find(command.requestId)
-        if (existing != null) return existing.toReceipt(command, fingerprint)
-
         var duplicateWait: CompletableDeferred<ReplyReceipt>? = null
         var work: Work? = null
+        var terminal: ReplyReceipt? = null
         mutex.withLock {
             val current = inFlight[command.requestId.value]
             if (current != null) {
@@ -77,18 +88,36 @@ class ReplyDispatcher(
                 }
                 duplicateWait = current.second
             } else {
+                val existing = ledger.find(command.requestId)
+                if (existing != null && existing.fingerprint != fingerprint) {
+                    throw ReplyRequestConflictException("request_id is already used by another payload")
+                }
+                if (existing != null && existing.status !in setOf(ReplyStatus.QUEUED, ReplyStatus.PROCESSING)) {
+                    terminal = existing.toReceipt(command, fingerprint)
+                    return@withLock
+                }
                 val receipt = CompletableDeferred<ReplyReceipt>()
                 val ready = CompletableDeferred<Unit>()
-                val candidate = Work(command, ready, receipt)
+                val candidate = Work(command, ready, receipt, existing)
                 if (queue.trySend(candidate).isFailure) {
                     throw ReplyQueueFullException("reply queue is full")
                 }
                 inFlight[command.requestId.value] = fingerprint to receipt
-                ledger.save(
-                    ReplyRecord(command.requestId, fingerprint, ReplyStatus.QUEUED)
-                )
-                ready.complete(Unit)
                 work = candidate
+            }
+        }
+
+        terminal?.let { return it }
+        work?.let { candidate ->
+            try {
+                if (candidate.recovered == null) {
+                    ledger.save(
+                        ReplyRecord(command.requestId, fingerprint, ReplyStatus.QUEUED)
+                    )
+                }
+                candidate.ready.complete(Unit)
+            } catch (error: Throwable) {
+                candidate.ready.completeExceptionally(error)
             }
         }
 
@@ -96,8 +125,20 @@ class ReplyDispatcher(
         return if (duplicateWait != null) result.copy(duplicate = true) else result
     }
 
-    private suspend fun process(command: ReplyCommand): ReplyReceipt {
+    private suspend fun process(command: ReplyCommand, recovered: ReplyRecord?): ReplyReceipt {
         val fingerprint = command.fingerprint()
+        if (recovered?.status == ReplyStatus.PROCESSING && recovered.baselineLogId != null) {
+            val reconciledLogId = commitProbe.awaitOwnRow(command, recovered.baselineLogId)
+            if (reconciledLogId != null) {
+                val reconciled = recovered.copy(
+                    status = ReplyStatus.KAKAO_DB_COMMITTED,
+                    kakaoLogId = reconciledLogId,
+                    message = null,
+                )
+                ledger.save(reconciled)
+                return reconciled.toReceipt().copy(duplicate = true)
+            }
+        }
         val baseline = commitProbe.latestLogId()
         ledger.save(
             ReplyRecord(
@@ -109,7 +150,7 @@ class ReplyDispatcher(
         )
         return try {
             sender.send(command)
-            val committedLogId = commitProbe.awaitOwnRow(command.roomId, baseline)
+            val committedLogId = commitProbe.awaitOwnRow(command, baseline)
             val status = if (committedLogId != null) {
                 ReplyStatus.KAKAO_DB_COMMITTED
             } else {

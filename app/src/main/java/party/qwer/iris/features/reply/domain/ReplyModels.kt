@@ -82,6 +82,9 @@ fun interface KakaoReplySender {
 
 /** Kakao database commit-evidence port. */
 interface KakaoReplyCommitProbe {
+    /** Return the newest local row that matches this exact command after the boundary. */
+    suspend fun awaitOwnRow(command: ReplyCommand, afterLogId: Long): Long?
+
+    /** Return the current local Kakao log boundary before a side effect. */
     fun latestLogId(): Long
-    suspend fun awaitOwnRow(roomId: Long, afterLogId: Long): Long?
 }

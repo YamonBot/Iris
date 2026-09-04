@@ -1,5 +1,6 @@
 package party.qwer.iris
 
+import android.util.Base64
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -25,6 +26,10 @@ import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.send
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -50,6 +55,48 @@ import party.qwer.iris.features.reply.domain.ReplyCommand
 import party.qwer.iris.features.reply.domain.ReplyPayload
 import party.qwer.iris.features.reply.domain.ReplyRequestId
 import party.qwer.iris.features.security.infrastructure.BearerTokenFile
+
+private const val MAX_REPLY_BODY_BYTES = 28L * 1024 * 1024
+private const val MAX_REPLY_TEXT_CHARS = 4_096
+private const val MAX_REPLY_IMAGES = 4
+private const val MAX_IMAGE_BASE64_CHARS = 14 * 1024 * 1024
+private const val MAX_IMAGE_BYTES = 10 * 1024 * 1024
+private const val MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
+private val mediaFetchSlots = Semaphore(2)
+
+private fun isSupportedImage(bytes: ByteArray): Boolean {
+    val png = bytes.size >= 8 && bytes.sliceArray(0..7).contentEquals(
+        byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+    )
+    val jpeg = bytes.size >= 3 && bytes[0] == 0xff.toByte() &&
+        bytes[1] == 0xd8.toByte() && bytes[2] == 0xff.toByte()
+    val webp = bytes.size >= 12 && bytes.copyOfRange(0, 4).decodeToString() == "RIFF" &&
+        bytes.copyOfRange(8, 12).decodeToString() == "WEBP"
+    return png || jpeg || webp
+}
+
+private fun validateImages(values: List<String>): List<String> {
+    require(values.isNotEmpty() && values.size <= MAX_REPLY_IMAGES) {
+        "image count must be between 1 and $MAX_REPLY_IMAGES"
+    }
+    var totalBytes = 0
+    values.forEach { value ->
+        require(value.isNotBlank() && value.length <= MAX_IMAGE_BASE64_CHARS) {
+            "encoded image exceeds size limit"
+        }
+        val bytes = try {
+            Base64.decode(value, Base64.DEFAULT)
+        } catch (error: IllegalArgumentException) {
+            throw IllegalArgumentException("image must be valid base64", error)
+        }
+        require(bytes.isNotEmpty() && bytes.size <= MAX_IMAGE_BYTES && isSupportedImage(bytes)) {
+            "image must be JPEG, PNG, or WebP within the size limit"
+        }
+        totalBytes += bytes.size
+        require(totalBytes <= MAX_TOTAL_IMAGE_BYTES) { "total image payload exceeds size limit" }
+    }
+    return values
+}
 
 
 class IrisServer(
@@ -197,22 +244,49 @@ class IrisServer(
                 }
 
                 post("/reply") {
-                    val replyRequest = call.receive<ReplyRequest>()
-                    val payload = when (replyRequest.type) {
-                        ReplyType.TEXT -> ReplyPayload.Text(replyRequest.data.jsonPrimitive.content)
-                        ReplyType.IMAGE -> ReplyPayload.Images(
-                            listOf(replyRequest.data.jsonPrimitive.content)
-                        )
-                        ReplyType.IMAGE_MULTIPLE -> ReplyPayload.Images(
-                            replyRequest.data.jsonArray.map { it.jsonPrimitive.content }
+                    val declaredLength = call.request.header(HttpHeaders.ContentLength)?.toLongOrNull()
+                    if (declaredLength != null && declaredLength > MAX_REPLY_BODY_BYTES) {
+                        return@post call.respond(
+                            HttpStatusCode.PayloadTooLarge,
+                            CommonErrorResponse(message = "reply request exceeds size limit"),
                         )
                     }
-                    val command = ReplyCommand(
-                        ReplyRequestId(replyRequest.request_id),
-                        replyRequest.room.toLong(),
-                        replyRequest.threadId?.toLong(),
-                        payload,
-                    )
+
+                    val command = try {
+                        val replyRequest = call.receive<ReplyRequest>()
+                        val roomId = replyRequest.room.toLong().also {
+                            require(it > 0) { "room must be a positive integer" }
+                        }
+                        val threadId = replyRequest.threadId?.toLong()?.also {
+                            require(it > 0) { "threadId must be a positive integer" }
+                        }
+                        val payload = when (replyRequest.type) {
+                            ReplyType.TEXT -> ReplyPayload.Text(
+                                replyRequest.data.jsonPrimitive.content.also {
+                                    require(it.isNotBlank() && it.length <= MAX_REPLY_TEXT_CHARS) {
+                                        "text must be 1-$MAX_REPLY_TEXT_CHARS characters"
+                                    }
+                                }
+                            )
+                            ReplyType.IMAGE -> ReplyPayload.Images(
+                                validateImages(listOf(replyRequest.data.jsonPrimitive.content))
+                            )
+                            ReplyType.IMAGE_MULTIPLE -> ReplyPayload.Images(
+                                validateImages(replyRequest.data.jsonArray.map { it.jsonPrimitive.content })
+                            )
+                        }
+                        ReplyCommand(
+                            ReplyRequestId(replyRequest.request_id),
+                            roomId,
+                            threadId,
+                            payload,
+                        )
+                    } catch (error: Exception) {
+                        return@post call.respond(
+                            HttpStatusCode.BadRequest,
+                            CommonErrorResponse(message = error.message ?: "invalid reply request"),
+                        )
+                    }
 
                     try {
                         val receipt = replyDispatcher.dispatch(command)
@@ -247,7 +321,9 @@ class IrisServer(
                             CommonErrorResponse(message = "invalid log id"),
                         )
                     try {
-                        val image = imageSource.fetch(logId)
+                        val image = mediaFetchSlots.withPermit {
+                            withContext(Dispatchers.IO) { imageSource.fetch(logId) }
+                        }
                         call.respondBytes(image.bytes, ContentType.parse(image.contentType))
                     } catch (error: NoSuchElementException) {
                         call.respond(
