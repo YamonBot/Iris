@@ -42,6 +42,18 @@ android {
     }
 }
 
+kotlin.sourceSets {
+    getByName("main").kotlin.exclude("**/*_test.kt")
+    getByName("test").kotlin.apply {
+        srcDir("src/main/java")
+        include("**/*_test.kt")
+    }
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    if (!name.contains("UnitTest")) exclude("**/*_test.kt")
+}
+
 android.applicationVariants.all {
     val variant = this
     val outputPath = "${rootProject.rootDir.path}/output"
