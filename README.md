@@ -49,12 +49,18 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
 
 모든 요청은 별도로 명시되지 않는 한 `Content-Type: application/json`과 함께 `POST` 요청으로 보내야 합니다.
 
+이 포크의 모든 엔드포인트는 `IRIS_AUTH_TOKEN_FILE`이 가리키는 파일의 토큰을
+`Authorization: Bearer <token>` 헤더로 요구합니다. 토큰 파일은 회전 중 두 토큰을
+줄 단위로 함께 둘 수 있습니다. 토큰 파일이 없거나 비어 있으면 Iris는 시작하지 않습니다.
+아래 예제는 호출 환경에 첫 활성 토큰을 `IRIS_TOKEN`으로 주입했다고 가정합니다.
+
 *   **`/reply`**: 카카오톡 채팅방에 메시지 또는 사진을 보냅니다.
 
     **요청 본문 (JSON):**
 
     ```json
     {
+      "request_id": "caller-owned-unique-id",
       "type": "text",  // 또는 "image", "image_multiple"
       "room": "[CHAT_ROOM_ID]", // 채팅방 ID (문자열)
       "data": "[MESSAGE_TEXT]"  // 텍스트 메시지의 경우
@@ -63,17 +69,31 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
     }
     ```
 
+    `/reply`는 최대 64개 요청을 FIFO로 처리합니다. 같은 `request_id`는 재전송하지
+    않으며 다른 payload로 재사용하면 `409`를 반환합니다. 성공은 카카오톡 로컬 DB에
+    대상 방의 새 `isMine=true` 행이 확인된 `kakao_db_committed`만 뜻하며, 상대방 전달이나
+    읽음 확인을 뜻하지 않습니다.
+
+* **`/media/{logId}` (GET)**: `type=2`인 카카오 사진 행의 원본을 반환합니다.
+  호출자가 URL을 넘길 수 없고, DB에 기록된 `https://talk.kakaocdn.net` 이미지와
+  10 MiB 이하 응답만 허용합니다. 일반 파일과 오픈채팅 전용 미디어는 지원하지 않습니다.
+
+* **`/healthz` (GET)**: 인증된 런타임 상태 확인용 엔드포인트입니다.
+
+* **`/identity/{chatId}/{userId}` (GET)**: 안정적인 숫자 ID와 분리된 현재 방/사용자
+  표시명, 그룹 여부, 오픈채팅 여부를 반환합니다. 표시명은 식별자로 사용하면 안 됩니다.
+
     **예시 (텍스트 메시지):**
 
     ```bash
-    curl -X POST -H "Content-Type: application/json" -d '{"type": "text", "room": "1234567890", "data": "SendMsgDB에서 보낸 메시지!"}' http://[YOUR_DEVICE_IP]:[bot_http_port]/reply
+    curl -X POST -H "Authorization: Bearer ${IRIS_TOKEN}" -H "Content-Type: application/json" -d '{"request_id": "example-text-0001", "type": "text", "room": "1234567890", "data": "SendMsgDB에서 보낸 메시지!"}' http://[YOUR_DEVICE_IP]:[bot_http_port]/reply
     ```
 
     **예시 (이미지 메시지):**
 
     ```bash
-    curl -X POST -H "Content-Type: application/json" -d '{"type": "image", "room": "1234567890", "data": "[BASE64_ENCODED_IMAGE_DATA]"}' http://[YOUR_DEVICE_IP]:[bot_http_port]/reply
-    curl -X POST -H "Content-Type: application/json" -d '{"type": "image_multiple", "room": "1234567890", "data": [BASE64_ENCODED_IMAGE_DATA1,BASE64_ENCODED_IMAGE_DATA2,BASE64_ENCODED_IMAGE_DATA3]}' http://[YOUR_DEVICE_IP]:[bot_http_port]/reply
+    curl -X POST -H "Authorization: Bearer ${IRIS_TOKEN}" -H "Content-Type: application/json" -d '{"request_id": "example-image-0001", "type": "image", "room": "1234567890", "data": "[BASE64_ENCODED_IMAGE_DATA]"}' http://[YOUR_DEVICE_IP]:[bot_http_port]/reply
+    curl -X POST -H "Authorization: Bearer ${IRIS_TOKEN}" -H "Content-Type: application/json" -d '{"request_id": "example-images-0001", "type": "image_multiple", "room": "1234567890", "data": ["BASE64_ENCODED_IMAGE_DATA1", "BASE64_ENCODED_IMAGE_DATA2"]}' http://[YOUR_DEVICE_IP]:[bot_http_port]/reply
     ```
 
 *   **`/query`**: 카카오톡 데이터베이스에 SQL 쿼리를 실행합니다. 이 메소드는 응답에서 암호화된 데이터 필드를 자동으로 복호화합니다.
@@ -93,13 +113,7 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
     **예시 (바인딩을 사용한 단일 쿼리):**
 
     ```bash
-    curl -X POST -H "Content-Type: application/json" -d '{"query": "SELECT _id, chat_id, user_id, message FROM chat_logs WHERE user_id = ? ORDER BY _id DESC LIMIT 5", "bind": ["1234567890"]}' http://[YOUR_DEVICE_IP]:[bot_http_port]/query
-    ```
-
-    **예시 (벌크 쿼리):**
-
-    ```bash
-    curl -X POST -H "Content-Type: application/json" -d '{"queries": [{"query": "SELECT _id, chat_id, user_id, message FROM chat_logs ORDER BY _id DESC LIMIT 5", "bind": []}, {"query": "SELECT name FROM db2.friends LIMIT 2", "bind": []}]}' http://[YOUR_DEVICE_IP]:[bot_http_port]/query
+    curl -X POST -H "Authorization: Bearer ${IRIS_TOKEN}" -H "Content-Type: application/json" -d '{"query": "SELECT _id, chat_id, user_id, message FROM chat_logs WHERE user_id = ? ORDER BY _id DESC LIMIT 5", "bind": ["1234567890"]}' http://[YOUR_DEVICE_IP]:[bot_http_port]/query
     ```
 
     **응답 (JSON):**
@@ -135,7 +149,7 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
     **예시:**
 
     ```bash
-    curl -X POST -H "Content-Type: application/json" -d '{"enc": 0, "b64_ciphertext": "[ENCRYPTED_MESSAGE_BASE64]", "user_id": 1234567890}' http://[YOUR_DEVICE_IP]:[bot_http_port]/decrypt
+    curl -X POST -H "Authorization: Bearer ${IRIS_TOKEN}" -H "Content-Type: application/json" -d '{"enc": 0, "b64_ciphertext": "[ENCRYPTED_MESSAGE_BASE64]", "user_id": 1234567890}' http://[YOUR_DEVICE_IP]:[bot_http_port]/decrypt
     ```
 
     **응답 (JSON):**
@@ -151,7 +165,7 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
     **예시:**
 
     ```bash
-    curl -X GET http://[YOUR_DEVICE_IP]:[bot_http_port]/aot
+    curl -X GET -H "Authorization: Bearer ${IRIS_TOKEN}" http://[YOUR_DEVICE_IP]:[bot_http_port]/aot
     ```
 
     **응답 (JSON):**
@@ -187,7 +201,7 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
     **예시:**
 
     ```bash
-    curl http://[YOUR_DEVICE_IP]:[bot_http_port]/config
+    curl -H "Authorization: Bearer ${IRIS_TOKEN}" http://[YOUR_DEVICE_IP]:[bot_http_port]/config
     ```
 
     **응답 (JSON):**
@@ -216,7 +230,7 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
     **예시:**
 
     ```bash
-    curl -X POST -H "Content-Type: application/json" -d '{"endpoint": "http://192.168.1.100:5000/new_messages"}' http://[YOUR_DEVICE_IP]:[bot_http_port]/config/endpoint
+    curl -X POST -H "Authorization: Bearer ${IRIS_TOKEN}" -H "Content-Type: application/json" -d '{"endpoint": "http://192.168.1.100:5000/new_messages"}' http://[YOUR_DEVICE_IP]:[bot_http_port]/config/endpoint
     ```
 
 *   **`/config/dbrate` (POST)**: 데이터베이스 폴링 속도를 업데이트합니다. 이 값을 조정하면 Iris가 데이터베이스에서 새 메시지를 확인하는 빈도가 변경됩니다. 값이 낮을수록 CPU 사용량이 증가하지만 메시지 감지가 더 즉각적일 수 있습니다.
@@ -232,7 +246,7 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
     **예시:**
 
     ```bash
-    curl -X POST -H "Content-Type: application/json" -d '{"rate": 300}' http://[YOUR_DEVICE_IP]:[bot_http_port]/config/dbrate
+    curl -X POST -H "Authorization: Bearer ${IRIS_TOKEN}" -H "Content-Type: application/json" -d '{"rate": 300}' http://[YOUR_DEVICE_IP]:[bot_http_port]/config/dbrate
     ```
 
 *   **`/config/sendrate` (POST)**: 메시지 전송 속도를 업데이트합니다. 이는 카카오톡으로 메시지를 보내는 최소 간격을 제어하여 전송 빈도를 관리하는 데 도움이 됩니다.
@@ -248,7 +262,7 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
     **예시:**
 
     ```bash
-    curl -X POST -H "Content-Type: application/json" -d '{"rate": 200}' http://[YOUR_DEVICE_IP]:[bot_http_port]/config/sendrate
+    curl -X POST -H "Authorization: Bearer ${IRIS_TOKEN}" -H "Content-Type: application/json" -d '{"rate": 200}' http://[YOUR_DEVICE_IP]:[bot_http_port]/config/sendrate
     ```
 *   **`/config/botport` (POST)**: 봇 HTTP 서버 포트를 업데이트합니다. **참고**: 이 변경 사항은 적용하려면 Iris를 재시작해야 합니다.
 
@@ -263,7 +277,7 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
     **예시:**
 
     ```bash
-    curl -X POST -H "Content-Type: application/json" -d '{"port": 3001}' http://[YOUR_DEVICE_IP]:[bot_http_port]/config/botport
+    curl -X POST -H "Authorization: Bearer ${IRIS_TOKEN}" -H "Content-Type: application/json" -d '{"port": 3001}' http://[YOUR_DEVICE_IP]:[bot_http_port]/config/botport
     ```
 
 #### WebSocket 엔드포인트

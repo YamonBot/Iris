@@ -8,6 +8,15 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonPrimitive
 import org.json.JSONException
 import org.json.JSONObject
+import java.security.MessageDigest
+
+/** Stable identifiers plus mutable display labels for one Kakao chat actor. */
+data class KakaoChatIdentity(
+    val roomName: String,
+    val actorName: String,
+    val isGroup: Boolean,
+    val isOpenChat: Boolean,
+)
 
 class KakaoDB {
     lateinit var connection: SQLiteDatabase
@@ -46,10 +55,42 @@ class KakaoDB {
             }
         }
 
+    /** Latest Kakao chat-log sequence observed locally. */
+    fun latestChatLogId(): Long = connection.rawQuery(
+        "SELECT COALESCE(MAX(_id), 0) FROM chat_logs", null
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
+
+    /** First exact own-text row committed in a room after a sequence boundary. */
+    fun findOwnTextChatLogAfter(chatId: Long, afterLogId: Long, text: String): Long? {
+        val rows = executeQuery(
+            "SELECT _id, user_id, message, v FROM chat_logs WHERE _id > ? AND chat_id = ? " +
+                "ORDER BY _id ASC LIMIT 64",
+            arrayOf(afterLogId.toString(), chatId.toString()),
+        )
+        return rows.asSequence()
+            .filter {
+                runCatching { JSONObject(it["v"] ?: "{}").optBoolean("isMine") }
+                    .getOrDefault(false)
+            }
+            .map(::decryptRow)
+            .firstOrNull { it["message"] == text }
+            ?.get("_id")
+            ?.toLongOrNull()
+    }
+
+    /** Read and decrypt one chat-log row by local sequence id. */
+    fun findChatLog(logId: Long): Map<String, String?>? {
+        val rows = executeQuery(
+            "SELECT _id, type, user_id, attachment, v FROM chat_logs WHERE _id = ? LIMIT 1",
+            arrayOf(logId.toString()),
+        )
+        return rows.firstOrNull()?.let(::decryptRow)
+    }
+
 
     fun queryUserName(chatId: Long, userId: Long): String? {
         val stringUserId = arrayOf(userId.toString())
-        val isOpenLink = (chatId and (2 shl 53)) != 0L;
+        val isOpenLink = (chatId and (2L shl 53)) != 0L
 
         val sql = when {
             isOpenLink && hasTable(
@@ -124,6 +165,33 @@ class KakaoDB {
         }
 
         return arrayOf(sender, sender)
+    }
+
+    /** Resolve mutable labels while keeping chat and user ids authoritative elsewhere. */
+    fun resolveChatIdentity(chatId: Long, userId: Long): KakaoChatIdentity {
+        val chatInfo = getChatInfo(chatId, userId)
+        var roomName = chatInfo[0]
+        var actorName = chatInfo[1]
+        if (actorName.isNullOrEmpty()) {
+            val rawKey = "person_${chatId}:${userId}"
+            val hashedId = MessageDigest.getInstance("SHA-256")
+                .digest(rawKey.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+            NamesDB.getName(hashedId)?.let { fallback ->
+                actorName = fallback.first
+                if (roomName.isNullOrEmpty()) roomName = fallback.second
+            }
+        }
+        val members = connection.rawQuery(
+            "SELECT active_members_count FROM chat_rooms WHERE id = ? LIMIT 1",
+            arrayOf(chatId.toString()),
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        return KakaoChatIdentity(
+            roomName = roomName?.takeIf(String::isNotBlank) ?: "room-$chatId",
+            actorName = actorName?.takeIf(String::isNotBlank) ?: "user-$userId",
+            isGroup = members > 2,
+            isOpenChat = (chatId and (2L shl 53)) != 0L,
+        )
     }
 
     fun logToDict(logId: Long): Map<String, String?> {

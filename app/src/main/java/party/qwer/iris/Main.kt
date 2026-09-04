@@ -3,6 +3,12 @@
 package party.qwer.iris
 
 import kotlinx.coroutines.flow.MutableSharedFlow
+import party.qwer.iris.features.media.infrastructure.KakaoImageSource
+import party.qwer.iris.features.reply.application.ReplyDispatcher
+import party.qwer.iris.features.reply.infrastructure.FileReplyLedger
+import party.qwer.iris.features.reply.infrastructure.KakaoReplyCommitProbeAdapter
+import party.qwer.iris.features.reply.infrastructure.KakaoReplySenderAdapter
+import party.qwer.iris.features.security.infrastructure.BearerTokenFile
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -16,9 +22,6 @@ class Main {
                 val wsEventFlow = MutableSharedFlow<String>()
 
                 val notificationReferer = readNotificationReferer()
-
-                Replier.startMessageSender()
-                println("Message sender thread started")
 
                 val kakaoDb = KakaoDB()
                 val observerHelper = ObserverHelper(kakaoDb, wsEventFlow)
@@ -35,8 +38,24 @@ class Main {
                 imageDeleter.startDeletion()
                 println("ImageDeleter started, and will delete images older than 1 hour.")
 
+                val authTokenPath = System.getenv("IRIS_AUTH_TOKEN_FILE")
+                    ?: error("IRIS_AUTH_TOKEN_FILE must point to a protected token file")
+                val replyLedgerPath = System.getenv("IRIS_REPLY_LEDGER_FILE")
+                    ?: "/data/local/tmp/iris-reply-ledger.jsonl"
+                val replyDispatcher = ReplyDispatcher(
+                    sender = KakaoReplySenderAdapter(notificationReferer),
+                    commitProbe = KakaoReplyCommitProbeAdapter(kakaoDb),
+                    ledger = FileReplyLedger(File(replyLedgerPath)),
+                    sendDelayMillis = { Configurable.messageSendRate.toLong() },
+                )
                 val irisServer = IrisServer(
-                    kakaoDb, dbObserver, observerHelper, notificationReferer, wsEventFlow
+                    kakaoDb,
+                    dbObserver,
+                    observerHelper,
+                    wsEventFlow,
+                    BearerTokenFile(File(authTokenPath)),
+                    replyDispatcher,
+                    KakaoImageSource(kakaoDb),
                 )
                 irisServer.startServer()
                 println("Iris Server started")
@@ -45,6 +64,7 @@ class Main {
             } catch (e: Exception) {
                 System.err.println("Iris Error")
                 e.printStackTrace()
+                System.exit(1)
             }
         }
 
@@ -64,4 +84,3 @@ class Main {
         }
     }
 }
-
