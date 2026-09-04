@@ -46,6 +46,27 @@ class KakaoDB {
             }
         }
 
+    /** Latest Kakao chat-log sequence observed locally. */
+    fun latestChatLogId(): Long = connection.rawQuery(
+        "SELECT COALESCE(MAX(_id), 0) FROM chat_logs", null
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
+
+    /** First local own-message row committed in a room after a sequence boundary. */
+    fun findOwnChatLogAfter(chatId: Long, afterLogId: Long): Long? = connection.rawQuery(
+        "SELECT _id FROM chat_logs WHERE _id > ? AND chat_id = ? " +
+            "AND v LIKE '%\"isMine\":true%' ORDER BY _id ASC LIMIT 1",
+        arrayOf(afterLogId.toString(), chatId.toString()),
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
+
+    /** Read and decrypt one chat-log row by local sequence id. */
+    fun findChatLog(logId: Long): Map<String, String?>? {
+        val rows = executeQuery(
+            "SELECT _id, type, user_id, attachment, v FROM chat_logs WHERE _id = ? LIMIT 1",
+            arrayOf(logId.toString()),
+        )
+        return rows.firstOrNull()?.let(::decryptRow)
+    }
+
 
     fun queryUserName(chatId: Long, userId: Long): String? {
         val stringUserId = arrayOf(userId.toString())

@@ -104,7 +104,6 @@ class Configurable {
                 configValues.messageSendRate = value
                 saveConfig()
                 println("MessageSendRate updated to: $messageSendRate")
-                Replier.restartMessageSender()
             }
     }
 }

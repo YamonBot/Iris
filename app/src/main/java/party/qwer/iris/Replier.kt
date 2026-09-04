@@ -6,55 +6,12 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import party.qwer.iris.Replier.Companion.SendMessageRequest
 import java.io.File
 
 // SendMsg : ye-seola/go-kdb
 
 class Replier {
     companion object {
-        private val messageChannel = Channel<SendMessageRequest>(Channel.CONFLATED)
-        private val coroutineScope = CoroutineScope(Dispatchers.IO)
-        private var messageSenderJob: Job? = null
-        private val mutex = Mutex()
-
-        init {
-            startMessageSender()
-        }
-
-        fun startMessageSender() {
-            coroutineScope.launch {
-                if (messageSenderJob?.isActive == true) {
-                    messageSenderJob?.cancelAndJoin()
-                }
-                messageSenderJob = launch {
-                    for (request in messageChannel) {
-                        try {
-                            mutex.withLock {
-                                request.send()
-                                delay(Configurable.messageSendRate)
-                            }
-                        } catch (e: Exception) {
-                            System.err.println("Error sending message from channel: $e")
-                        }
-                    }
-                }
-            }
-        }
-
-        fun restartMessageSender() {
-            startMessageSender()
-        }
-
         private fun sendMessageInternal(
             referer: String,
             chatId: Long,
@@ -86,39 +43,14 @@ class Replier {
             AndroidHiddenApi.startService(intent)
         }
 
-        fun sendMessage(referer: String, chatId: Long, msg: String, threadId: Long?) {
-            coroutineScope.launch {
-                messageChannel.send(SendMessageRequest {
-                    sendMessageInternal(
-                        referer, chatId, msg, threadId
-                    )
-                })
-            }
+        /** Send one text intent. Ordering and retries are owned by ReplyDispatcher. */
+        fun sendMessageNow(referer: String, chatId: Long, msg: String, threadId: Long?) {
+            sendMessageInternal(referer, chatId, msg, threadId)
         }
 
-
-        fun sendPhoto(room: Long, base64ImageDataString: String) {
-            coroutineScope.launch {
-                messageChannel.send(SendMessageRequest {
-                    sendPhotoInternal(
-                        room, base64ImageDataString
-                    )
-                })
-            }
-        }
-
-        fun sendMultiplePhotos(room: Long, base64ImageDataStrings: List<String>) {
-            coroutineScope.launch {
-                messageChannel.send(SendMessageRequest {
-                    sendMultiplePhotosInternal(
-                        room, base64ImageDataStrings
-                    )
-                })
-            }
-        }
-
-        private fun sendPhotoInternal(room: Long, base64ImageDataString: String) {
-            sendMultiplePhotosInternal(room, listOf(base64ImageDataString))
+        /** Send one or more image intents. */
+        fun sendImagesNow(room: Long, base64ImageDataStrings: List<String>) {
+            sendMultiplePhotosInternal(room, base64ImageDataStrings)
         }
 
         private fun sendMultiplePhotosInternal(room: Long, base64ImageDataStrings: List<String>) {
@@ -162,11 +94,6 @@ class Replier {
                 System.err.println("Error starting activity for sending multiple photos: $e")
                 throw e
             }
-        }
-
-
-        internal fun interface SendMessageRequest {
-            suspend fun send()
         }
 
         private fun mediaScan(uri: Uri) {

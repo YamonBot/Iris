@@ -1,16 +1,20 @@
 package party.qwer.iris
 
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.install
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
+import io.ktor.server.request.header
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -36,15 +40,26 @@ import party.qwer.iris.model.DecryptResponse
 import party.qwer.iris.model.QueryRequest
 import party.qwer.iris.model.QueryResponse
 import party.qwer.iris.model.ReplyRequest
+import party.qwer.iris.model.ReplyResponse
 import party.qwer.iris.model.ReplyType
+import party.qwer.iris.features.media.infrastructure.KakaoImageSource
+import party.qwer.iris.features.reply.application.ReplyDispatcher
+import party.qwer.iris.features.reply.application.ReplyQueueFullException
+import party.qwer.iris.features.reply.application.ReplyRequestConflictException
+import party.qwer.iris.features.reply.domain.ReplyCommand
+import party.qwer.iris.features.reply.domain.ReplyPayload
+import party.qwer.iris.features.reply.domain.ReplyRequestId
+import party.qwer.iris.features.security.infrastructure.BearerTokenFile
 
 
 class IrisServer(
     private val kakaoDB: KakaoDB,
     private val dbObserver: DBObserver,
     private val observerHelper: ObserverHelper,
-    private val notificationReferer: String,
-    private val wsBroadcastFlow: MutableSharedFlow<String>
+    private val wsBroadcastFlow: MutableSharedFlow<String>,
+    private val bearerTokenFile: BearerTokenFile,
+    private val replyDispatcher: ReplyDispatcher,
+    private val imageSource: KakaoImageSource,
 ) {
     val sharedFlow = wsBroadcastFlow.asSharedFlow()
 
@@ -69,6 +84,20 @@ class IrisServer(
             }
 
             routing {
+                intercept(ApplicationCallPipeline.Plugins) {
+                    if (!bearerTokenFile.accepts(context.request.header(HttpHeaders.Authorization))) {
+                        context.respond(
+                            HttpStatusCode.Unauthorized,
+                            CommonErrorResponse(message = "missing or invalid bearer token"),
+                        )
+                        finish()
+                    }
+                }
+
+                get("/healthz") {
+                    call.respond(ApiResponse(success = true, message = "healthy"))
+                }
+
                 route("/dashboard") {
                     get {
                         val html = PageRenderer.renderDashboard()
@@ -169,27 +198,68 @@ class IrisServer(
 
                 post("/reply") {
                     val replyRequest = call.receive<ReplyRequest>()
-                    val roomId = replyRequest.room.toLong()
-                    val threadId = replyRequest.threadId?.toLong()
-
-                    when (replyRequest.type) {
-                        ReplyType.TEXT -> Replier.sendMessage(
-                            notificationReferer,
-                            roomId,
-                            replyRequest.data.jsonPrimitive.content,
-                            threadId
+                    val payload = when (replyRequest.type) {
+                        ReplyType.TEXT -> ReplyPayload.Text(replyRequest.data.jsonPrimitive.content)
+                        ReplyType.IMAGE -> ReplyPayload.Images(
+                            listOf(replyRequest.data.jsonPrimitive.content)
                         )
-
-                        ReplyType.IMAGE -> Replier.sendPhoto(
-                            roomId, replyRequest.data.jsonPrimitive.content
+                        ReplyType.IMAGE_MULTIPLE -> ReplyPayload.Images(
+                            replyRequest.data.jsonArray.map { it.jsonPrimitive.content }
                         )
-
-                        ReplyType.IMAGE_MULTIPLE -> Replier.sendMultiplePhotos(
-                            roomId,
-                            replyRequest.data.jsonArray.map { it.jsonPrimitive.content })
                     }
+                    val command = ReplyCommand(
+                        ReplyRequestId(replyRequest.request_id),
+                        replyRequest.room.toLong(),
+                        replyRequest.threadId?.toLong(),
+                        payload,
+                    )
 
-                    call.respond(ApiResponse(success = true, message = "success"))
+                    try {
+                        val receipt = replyDispatcher.dispatch(command)
+                        call.respond(
+                            if (receipt.success) HttpStatusCode.OK else HttpStatusCode.BadGateway,
+                            ReplyResponse(
+                                receipt.success,
+                                receipt.requestId.value,
+                                receipt.status.wireValue,
+                                receipt.kakaoLogId,
+                                receipt.duplicate,
+                                receipt.message,
+                            ),
+                        )
+                    } catch (error: ReplyRequestConflictException) {
+                        call.respond(
+                            HttpStatusCode.Conflict,
+                            CommonErrorResponse(message = error.message ?: "request_id conflict"),
+                        )
+                    } catch (error: ReplyQueueFullException) {
+                        call.respond(
+                            HttpStatusCode.ServiceUnavailable,
+                            CommonErrorResponse(message = error.message ?: "reply queue is full"),
+                        )
+                    }
+                }
+
+                get("/media/{logId}") {
+                    val logId = call.parameters["logId"]?.toLongOrNull()
+                        ?: return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            CommonErrorResponse(message = "invalid log id"),
+                        )
+                    try {
+                        val image = imageSource.fetch(logId)
+                        call.respondBytes(image.bytes, ContentType.parse(image.contentType))
+                    } catch (error: NoSuchElementException) {
+                        call.respond(
+                            HttpStatusCode.NotFound,
+                            CommonErrorResponse(message = error.message ?: "image not found"),
+                        )
+                    } catch (error: IllegalArgumentException) {
+                        call.respond(
+                            HttpStatusCode.UnprocessableEntity,
+                            CommonErrorResponse(message = error.message ?: "unsupported image"),
+                        )
+                    }
                 }
 
                 post("/query") {

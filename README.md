@@ -49,12 +49,17 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
 
 모든 요청은 별도로 명시되지 않는 한 `Content-Type: application/json`과 함께 `POST` 요청으로 보내야 합니다.
 
+이 포크의 모든 엔드포인트는 `IRIS_AUTH_TOKEN_FILE`이 가리키는 파일의 토큰을
+`Authorization: Bearer <token>` 헤더로 요구합니다. 토큰 파일은 회전 중 두 토큰을
+줄 단위로 함께 둘 수 있습니다. 토큰 파일이 없거나 비어 있으면 Iris는 시작하지 않습니다.
+
 *   **`/reply`**: 카카오톡 채팅방에 메시지 또는 사진을 보냅니다.
 
     **요청 본문 (JSON):**
 
     ```json
     {
+      "request_id": "caller-owned-unique-id",
       "type": "text",  // 또는 "image", "image_multiple"
       "room": "[CHAT_ROOM_ID]", // 채팅방 ID (문자열)
       "data": "[MESSAGE_TEXT]"  // 텍스트 메시지의 경우
@@ -62,6 +67,17 @@ Iris는 기본적으로 HTTP 프로토콜을 통해 정보를 주고 받습니�
                                 // 여러 이미지 메시지의 경우 Base64 인코딩된 이미지 문자열의 리스트
     }
     ```
+
+    `/reply`는 최대 64개 요청을 FIFO로 처리합니다. 같은 `request_id`는 재전송하지
+    않으며 다른 payload로 재사용하면 `409`를 반환합니다. 성공은 카카오톡 로컬 DB에
+    대상 방의 새 `isMine=true` 행이 확인된 `kakao_db_committed`만 뜻하며, 상대방 전달이나
+    읽음 확인을 뜻하지 않습니다.
+
+* **`/media/{logId}` (GET)**: `type=2`인 카카오 사진 행의 원본을 반환합니다.
+  호출자가 URL을 넘길 수 없고, DB에 기록된 `https://talk.kakaocdn.net` 이미지와
+  10 MiB 이하 응답만 허용합니다. 일반 파일과 오픈채팅 전용 미디어는 지원하지 않습니다.
+
+* **`/healthz` (GET)**: 인증된 런타임 상태 확인용 엔드포인트입니다.
 
     **예시 (텍스트 메시지):**
 
