@@ -337,6 +337,7 @@ class IrisServer(
 
                 get("/media/{logId}") {
                     val index = (call.request.queryParameters["index"] ?: "0").toIntOrNull()
+                        ?.takeIf { it in 0..29 }
                         ?: return@get call.respond(
                             HttpStatusCode.BadRequest,
                             CommonErrorResponse(message = "invalid image index"),
