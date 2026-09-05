@@ -6,14 +6,19 @@ import kotlin.test.assertNull
 
 class ImageCommitTest {
     @Test fun exactImageMatches() {
-        assertEquals(12L, matchingImageCommit(listOf("a"), listOf(11L to "b", 12L to "a")))
+        assertEquals(12L, matchingImageCommit(listOf("a"), listOf(11L to listOf("b"), 12L to listOf("a"))))
     }
     @Test fun partialOrUnrelatedBatchFails() {
-        assertNull(matchingImageCommit(listOf("a", "b"), listOf(11L to "a")))
-        assertNull(matchingImageCommit(listOf("a"), listOf(11L to "b")))
+        assertNull(matchingImageCommit(listOf("a", "b"), listOf(11L to listOf("a"))))
+        assertNull(matchingImageCommit(listOf("a"), listOf(11L to listOf("b"))))
     }
     @Test fun repeatedImageNeedsDistinctRows() {
-        assertNull(matchingImageCommit(listOf("a", "a"), listOf(11L to "a", 11L to "a")))
-        assertEquals(12L, matchingImageCommit(listOf("a", "a"), listOf(11L to "a", 12L to "a")))
+        assertNull(matchingImageCommit(listOf("a", "a"), listOf(11L to listOf("a"), 11L to listOf("a"))))
+        assertEquals(12L, matchingImageCommit(listOf("a", "a"), listOf(11L to listOf("a"), 12L to listOf("a"))))
+    }
+    @Test fun groupedImagesPreserveMultiplicity() {
+        assertEquals(11L, matchingImageCommit(listOf("a", "a"), listOf(11L to listOf("a", "a"))))
+        assertEquals(11L, matchingImageCommit(listOf("a", "b"), listOf(11L to listOf("a", "b"))))
+        assertNull(matchingImageCommit(listOf("a", "b"), listOf(11L to listOf("a", "c"))))
     }
 }

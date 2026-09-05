@@ -78,19 +78,24 @@ class KakaoDB {
             ?.toLongOrNull()
     }
 
-    /** Own single-image checksum evidence in one room after the send boundary. */
-    fun findOwnImageChatLogsAfter(chatId: Long, afterLogId: Long): List<Pair<Long, String>> =
+    /** Own single or grouped image checksum evidence after the send boundary. */
+    fun findOwnImageChatLogsAfter(chatId: Long, afterLogId: Long): List<Pair<Long, List<String>>> =
         executeQuery(
-            "SELECT _id, user_id, attachment, v FROM chat_logs WHERE _id > ? AND chat_id = ? AND type = 2 " +
+            "SELECT _id, type, user_id, attachment, v FROM chat_logs WHERE _id > ? AND chat_id = ? AND type IN (2, 27) " +
                 "ORDER BY _id ASC LIMIT 64",
             arrayOf(afterLogId.toString(), chatId.toString()),
         ).filter {
             runCatching { JSONObject(it["v"] ?: "{}").optBoolean("isMine") }.getOrDefault(false)
         }.map(::decryptRow).mapNotNull { row ->
             val id = row["_id"]?.toLongOrNull()
-            val checksum = runCatching { JSONObject(row["attachment"] ?: "{}").optString("cs") }
-                .getOrDefault("").lowercase()
-            if (id != null && checksum.matches(Regex("[0-9a-f]{40}"))) id to checksum else null
+            val checksums = runCatching {
+                val attachment = JSONObject(row["attachment"] ?: "{}")
+                if (row["type"] == "27") {
+                    val list = attachment.optJSONArray("csl")
+                    (0 until (list?.length() ?: 0)).map { list!!.optString(it).lowercase() }
+                } else listOf(attachment.optString("cs").lowercase())
+            }.getOrDefault(emptyList()).filter { it.matches(Regex("[0-9a-f]{40}")) }
+            if (id != null && checksums.isNotEmpty()) id to checksums else null
         }
 
     /** Read and decrypt one chat-log row by local sequence id. */
