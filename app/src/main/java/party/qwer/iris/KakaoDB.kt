@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.json.JSONException
 import org.json.JSONObject
 import java.security.MessageDigest
+import party.qwer.iris.features.reply.infrastructure.imageCommitChecksums
 
 /** Stable identifiers plus mutable display labels for one Kakao chat actor. */
 data class KakaoChatIdentity(
@@ -88,13 +89,7 @@ class KakaoDB {
             runCatching { JSONObject(it["v"] ?: "{}").optBoolean("isMine") }.getOrDefault(false)
         }.map(::decryptRow).mapNotNull { row ->
             val id = row["_id"]?.toLongOrNull()
-            val checksums = runCatching {
-                val attachment = JSONObject(row["attachment"] ?: "{}")
-                if (row["type"] == "27") {
-                    val list = attachment.optJSONArray("csl")
-                    (0 until (list?.length() ?: 0)).map { list!!.optString(it).lowercase() }
-                } else listOf(attachment.optString("cs").lowercase())
-            }.getOrDefault(emptyList()).filter { it.matches(Regex("[0-9a-f]{40}")) }
+            val checksums = imageCommitChecksums(row["type"], row["attachment"] ?: "{}")
             if (id != null && checksums.isNotEmpty()) id to checksums else null
         }
 
