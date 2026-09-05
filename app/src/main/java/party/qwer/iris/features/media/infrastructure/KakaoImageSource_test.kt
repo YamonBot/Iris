@@ -7,6 +7,17 @@ import kotlin.test.assertFailsWith
 
 class KakaoImageSourceTest {
     @Test
+    fun `Kakao JPG alias matches JPEG without allowing other formats`() {
+        assertEquals("image/jpeg", canonicalImageType("image/jpg"))
+        assertEquals("image/jpeg", canonicalImageType(" IMAGE/JPG; charset=binary "))
+        assertEquals("image/jpeg", canonicalImageType("image/jpeg"))
+        assertEquals("image/svg+xml", canonicalImageType("image/svg+xml"))
+        val photo = selectImageAttachment("2", """{"url":"https://talk.kakaocdn.net/photo","mt":"image/jpg","s":4202877}""", 0)
+        assertEquals("image/jpeg", canonicalImageType(photo.contentType))
+        assertEquals(4202877L, photo.size)
+    }
+
+    @Test
     fun `grouped photos resolve exact index and reject mismatched arrays`() {
         val grouped = """{"imageUrls":["https://talk.kakaocdn.net/a","https://talk.kakaocdn.net/b"],"mtl":["image/png","image/jpeg"],"sl":[10,20]}"""
         val second = selectImageAttachment("27", grouped, 1)

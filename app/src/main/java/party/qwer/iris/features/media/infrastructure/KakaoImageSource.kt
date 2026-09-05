@@ -15,6 +15,12 @@ import java.util.concurrent.TimeUnit
 private const val DEFAULT_MAX_IMAGE_BYTES = 10L * 1024 * 1024
 private val ALLOWED_IMAGE_TYPES = setOf("image/jpeg", "image/png", "image/webp")
 
+/** Normalize Kakao's JPEG alias while preserving the raster allowlist. */
+internal fun canonicalImageType(value: String): String =
+    value.substringBefore(';').trim().lowercase().let {
+        if (it == "image/jpg") "image/jpeg" else it
+    }
+
 /** Detect the small raster allowlist from magic bytes, never from MIME alone. */
 internal fun detectedImageType(bytes: ByteArray): String? = when {
     bytes.size >= 3 && bytes[0] == 0xff.toByte() &&
@@ -73,7 +79,7 @@ class KakaoImageSource(
     fun fetch(logId: Long, index: Int = 0): KakaoImage {
         val row = kakaoDB.findChatLog(logId) ?: throw NoSuchElementException("chat log not found")
         val attachment = selectImageAttachment(row["type"], row["attachment"] ?: "{}", index)
-        val contentType = attachment.contentType.lowercase()
+        val contentType = canonicalImageType(attachment.contentType)
         require(contentType in ALLOWED_IMAGE_TYPES) { "attachment is not a supported image" }
         val declaredSize = attachment.size
         require(declaredSize in 0..maxBytes) { "image exceeds size limit" }
@@ -87,10 +93,7 @@ class KakaoImageSource(
         val request = Request.Builder().url(url).get().build()
         httpClient.newCall(request).execute().use { response ->
             require(response.isSuccessful) { "Kakao image fetch failed: ${response.code}" }
-            val responseType = response.header("Content-Type")
-                ?.substringBefore(';')
-                ?.trim()
-                ?.lowercase()
+            val responseType = response.header("Content-Type")?.let(::canonicalImageType)
             require(responseType == null || responseType == contentType) {
                 "Kakao image content type does not match its attachment"
             }
