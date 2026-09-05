@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.json.JSONException
 import org.json.JSONObject
 import java.security.MessageDigest
+import party.qwer.iris.features.reply.infrastructure.imageCommitChecksums
 
 /** Stable identifiers plus mutable display labels for one Kakao chat actor. */
 data class KakaoChatIdentity(
@@ -62,12 +63,14 @@ class KakaoDB {
 
     /** First exact own-text row committed in a room after a sequence boundary. */
     fun findOwnTextChatLogAfter(chatId: Long, afterLogId: Long, text: String): Long? {
-        val rows = executeQuery(
-            "SELECT _id, user_id, message, v FROM chat_logs WHERE _id > ? AND chat_id = ? " +
-                "ORDER BY _id ASC LIMIT 64",
-            arrayOf(afterLogId.toString(), chatId.toString()),
-        )
-        return rows.asSequence()
+        val rows = chatLogPages(afterLogId, latestChatLogId()) { cursor, throughId ->
+            executeQuery(
+                "SELECT _id, user_id, message, v FROM chat_logs WHERE _id > ? AND _id <= ? AND chat_id = ? " +
+                    "ORDER BY _id ASC LIMIT 64",
+                arrayOf(cursor.toString(), throughId.toString(), chatId.toString()),
+            )
+        }
+        return rows
             .filter {
                 runCatching { JSONObject(it["v"] ?: "{}").optBoolean("isMine") }
                     .getOrDefault(false)
@@ -78,20 +81,21 @@ class KakaoDB {
             ?.toLongOrNull()
     }
 
-    /** Own single-image checksum evidence in one room after the send boundary. */
-    fun findOwnImageChatLogsAfter(chatId: Long, afterLogId: Long): List<Pair<Long, String>> =
-        executeQuery(
-            "SELECT _id, user_id, attachment, v FROM chat_logs WHERE _id > ? AND chat_id = ? AND type = 2 " +
-                "ORDER BY _id ASC LIMIT 64",
-            arrayOf(afterLogId.toString(), chatId.toString()),
-        ).filter {
+    /** Own single or grouped image checksum evidence after the send boundary. */
+    fun findOwnImageChatLogsAfter(chatId: Long, afterLogId: Long): List<Pair<Long, List<String>>> =
+        chatLogPages(afterLogId, latestChatLogId()) { cursor, throughId ->
+            executeQuery(
+                "SELECT _id, type, user_id, attachment, v FROM chat_logs WHERE _id > ? AND _id <= ? AND chat_id = ? AND type IN (2, 27) " +
+                    "ORDER BY _id ASC LIMIT 64",
+                arrayOf(cursor.toString(), throughId.toString(), chatId.toString()),
+            )
+        }.filter {
             runCatching { JSONObject(it["v"] ?: "{}").optBoolean("isMine") }.getOrDefault(false)
         }.map(::decryptRow).mapNotNull { row ->
             val id = row["_id"]?.toLongOrNull()
-            val checksum = runCatching { JSONObject(row["attachment"] ?: "{}").optString("cs") }
-                .getOrDefault("").lowercase()
-            if (id != null && checksum.matches(Regex("[0-9a-f]{40}"))) id to checksum else null
-        }
+            val checksums = imageCommitChecksums(row["type"], row["attachment"] ?: "{}")
+            if (id != null && checksums.isNotEmpty()) id to checksums else null
+        }.toList()
 
     /** Read and decrypt one chat-log row by local sequence id. */
     fun findChatLog(logId: Long): Map<String, String?>? {

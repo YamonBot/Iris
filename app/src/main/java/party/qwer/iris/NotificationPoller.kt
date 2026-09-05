@@ -55,7 +55,11 @@ class NotificationPoller {
 
             val subText = extras.getString(Notification.EXTRA_SUB_TEXT)
             val summaryText = extras.getString(Notification.EXTRA_SUMMARY_TEXT)
-            val room = subText ?: summaryText ?: rawTitle.orEmpty()
+            val room = notificationRoomName(subText, summaryText, rawTitle)
+            if (room == null) {
+                processedNotifications[key] = postTime
+                continue
+            }
 
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

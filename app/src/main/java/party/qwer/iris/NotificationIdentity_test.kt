@@ -5,6 +5,12 @@ import kotlin.test.assertEquals
 
 class NotificationIdentityTest {
     @Test
+    fun blankRoomLabelsDoNotReplaceKnownRooms() {
+        assertEquals("Room", notificationRoomName("", " ", "Room"))
+        assertEquals("Summary", notificationRoomName(null, "Summary", "Sender"))
+        assertEquals(null, notificationRoomName(null, "", " "))
+    }
+    @Test
     fun groupedSendersRemainDistinct() {
         assertEquals(mapOf("a" to "Alice", "b" to "Bob"),
             latestSenderNames(listOf("a" to "Alice", "b" to "Bob")))
