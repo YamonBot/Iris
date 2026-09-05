@@ -2,7 +2,11 @@ package party.qwer.iris.features.media.infrastructure
 
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import party.qwer.iris.KakaoDB
 import java.io.ByteArrayOutputStream
 import java.net.URI
@@ -27,25 +31,31 @@ internal fun detectedImageType(bytes: ByteArray): String? = when {
 data class KakaoImage(val contentType: String, val bytes: ByteArray)
 
 /** Normalize one indexed attachment without accepting a URL from the caller. */
-internal fun selectImageAttachment(type: String?, attachment: JSONObject, index: Int): JSONObject {
+internal data class ImageAttachment(val url: String, val contentType: String, val size: Long)
+
+/** Select one attachment using the already installed JSON parser. */
+internal fun selectImageAttachment(type: String?, raw: String, index: Int): ImageAttachment {
     require(index in 0..29) { "invalid image index" }
+    val attachment = Json.parseToJsonElement(raw).jsonObject
     if (type == "2") {
         require(index == 0) { "single image index must be zero" }
-        return attachment
+        return ImageAttachment(attachment["url"]?.jsonPrimitive?.content.orEmpty(),
+            attachment["mt"]?.jsonPrimitive?.content.orEmpty(),
+            attachment["s"]?.jsonPrimitive?.longOrNull ?: -1)
     }
     require(type == "27") { "chat log is not a supported image" }
-    val urls = attachment.optJSONArray("imageUrls")
+    val urls = attachment["imageUrls"]?.jsonArray
         ?: throw IllegalArgumentException("missing grouped images")
-    val types = attachment.optJSONArray("mtl")
+    val types = attachment["mtl"]?.jsonArray
         ?: throw IllegalArgumentException("missing grouped image types")
-    val sizes = attachment.optJSONArray("sl")
+    val sizes = attachment["sl"]?.jsonArray
         ?: throw IllegalArgumentException("missing grouped image sizes")
-    require(urls.length() in 1..30 && index < urls.length() &&
-        types.length() == urls.length() && sizes.length() == urls.length()) {
+    require(urls.size in 1..30 && index < urls.size &&
+        types.size == urls.size && sizes.size == urls.size) {
         "invalid grouped image arrays or index"
     }
-    return JSONObject().put("url", urls.optString(index))
-        .put("mt", types.optString(index)).put("s", sizes.optLong(index, -1))
+    return ImageAttachment(urls[index].jsonPrimitive.content,
+        types[index].jsonPrimitive.content, sizes[index].jsonPrimitive.longOrNull ?: -1)
 }
 
 /** Resolves Kakao-hosted single/grouped image attachments by database id. */
@@ -62,13 +72,13 @@ class KakaoImageSource(
     /** Fetch a validated Kakao image without accepting caller-provided URLs. */
     fun fetch(logId: Long, index: Int = 0): KakaoImage {
         val row = kakaoDB.findChatLog(logId) ?: throw NoSuchElementException("chat log not found")
-        val attachment = selectImageAttachment(row["type"], JSONObject(row["attachment"] ?: "{}"), index)
-        val contentType = attachment.optString("mt").lowercase()
+        val attachment = selectImageAttachment(row["type"], row["attachment"] ?: "{}", index)
+        val contentType = attachment.contentType.lowercase()
         require(contentType in ALLOWED_IMAGE_TYPES) { "attachment is not a supported image" }
-        val declaredSize = attachment.optLong("s", -1)
+        val declaredSize = attachment.size
         require(declaredSize in 0..maxBytes) { "image exceeds size limit" }
 
-        val url = attachment.optString("url")
+        val url = attachment.url
         val uri = URI(url)
         require(uri.scheme == "https" && uri.host == "talk.kakaocdn.net") {
             "image source is not an allowed Kakao CDN host"

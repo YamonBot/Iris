@@ -1,23 +1,27 @@
-# sendmsg
+# Iris build and tests
 
-## 프로젝트를 열기 전에 아래 내용을 따라주세요.
-1. 링크에서 파일을 다운로드합니다 [android-30.jar 다운로드](https://drive.google.com/drive/folders/17oMwQ0xBcSGn159mgbqxcXXEcneUmnph)
-2. 다운로드한 파일을 `app/libs/android-30.jar`에 저장합니다
+Use JDK 17 and an Android SDK containing platform 35 and build-tools 35.0.0.
+Set `JAVA_HOME` and `ANDROID_HOME` to their installed locations. Android Studio,
+an emulator, and the old separately downloaded `android-30.jar` are not needed
+by the current Gradle project.
 
-## 빌드
-### 안드로이드 스튜디오에서 빌드
-1. 프로젝트 열기
-2. Build - Make Project
+Use the pinned Gradle wrapper:
 
-### cmdline에서 빌드
-1. ./gradlew build
-
-### cmdline에서 빌드 (윈도우)
-1. .\gradlew.bat build
-
-## 실행
-1. `output/Iris-{buildType}.dex`를 장치로 옮깁니다.
-2. 아래 명령어를 장치에서 실행합니다.
-```shell
-CLASSPATH=/data/local/tmp/Iris.dex app_process / party.qwer.iris.Main
+```sh
+./gradlew :app:testDebugUnitTest --no-daemon --max-workers=1
+./gradlew :app:assembleDebug --no-daemon --max-workers=1
 ```
+
+Tests are colocated as `*_test.kt` in `app/src/main/java`; the Gradle test
+source set includes these files and production compilation excludes them.
+Check counts in `app/build/test-results/testDebugUnitTest/TEST-*.xml`;
+an unmatched filename can silently omit a test.
+
+The APK is copied into `output/Iris-debug.apk`. Building is not deployment:
+use the owning runtime's candidate-validation and promotion path, preserving
+its current APK, database and rollback evidence.
+
+2026-09-05 validation used official command-line tools build 15859902 (Mac ARM),
+archive SHA256 `835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e`.
+Verify downloads at https://developer.android.com/studio. Current tools
+deprecate `sdkmanager` in favor of `android sdk`; bootstrap is not app runtime.
