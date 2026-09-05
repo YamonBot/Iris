@@ -26,7 +26,29 @@ internal fun detectedImageType(bytes: ByteArray): String? = when {
 /** Validated image bytes resolved from one Kakao image chat-log row. */
 data class KakaoImage(val contentType: String, val bytes: ByteArray)
 
-/** Resolves only Kakao-hosted type-2 image attachments by database id. */
+/** Normalize one indexed attachment without accepting a URL from the caller. */
+internal fun selectImageAttachment(type: String?, attachment: JSONObject, index: Int): JSONObject {
+    require(index in 0..29) { "invalid image index" }
+    if (type == "2") {
+        require(index == 0) { "single image index must be zero" }
+        return attachment
+    }
+    require(type == "27") { "chat log is not a supported image" }
+    val urls = attachment.optJSONArray("imageUrls")
+        ?: throw IllegalArgumentException("missing grouped images")
+    val types = attachment.optJSONArray("mtl")
+        ?: throw IllegalArgumentException("missing grouped image types")
+    val sizes = attachment.optJSONArray("sl")
+        ?: throw IllegalArgumentException("missing grouped image sizes")
+    require(urls.length() in 1..30 && index < urls.length() &&
+        types.length() == urls.length() && sizes.length() == urls.length()) {
+        "invalid grouped image arrays or index"
+    }
+    return JSONObject().put("url", urls.optString(index))
+        .put("mt", types.optString(index)).put("s", sizes.optLong(index, -1))
+}
+
+/** Resolves Kakao-hosted single/grouped image attachments by database id. */
 class KakaoImageSource(
     private val kakaoDB: KakaoDB,
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
@@ -38,10 +60,9 @@ class KakaoImageSource(
     private val maxBytes: Long = DEFAULT_MAX_IMAGE_BYTES,
 ) {
     /** Fetch a validated Kakao image without accepting caller-provided URLs. */
-    fun fetch(logId: Long): KakaoImage {
+    fun fetch(logId: Long, index: Int = 0): KakaoImage {
         val row = kakaoDB.findChatLog(logId) ?: throw NoSuchElementException("chat log not found")
-        require(row["type"] == "2") { "chat log is not a supported image" }
-        val attachment = JSONObject(row["attachment"] ?: "{}")
+        val attachment = selectImageAttachment(row["type"], JSONObject(row["attachment"] ?: "{}"), index)
         val contentType = attachment.optString("mt").lowercase()
         require(contentType in ALLOWED_IMAGE_TYPES) { "attachment is not a supported image" }
         val declaredSize = attachment.optLong("s", -1)

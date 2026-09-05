@@ -336,6 +336,11 @@ class IrisServer(
                 }
 
                 get("/media/{logId}") {
+                    val index = (call.request.queryParameters["index"] ?: "0").toIntOrNull()
+                        ?: return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            CommonErrorResponse(message = "invalid image index"),
+                        )
                     val logId = call.parameters["logId"]?.toLongOrNull()
                         ?: return@get call.respond(
                             HttpStatusCode.BadRequest,
@@ -343,7 +348,7 @@ class IrisServer(
                         )
                     try {
                         val image = mediaFetchSlots.withPermit {
-                            withContext(Dispatchers.IO) { imageSource.fetch(logId) }
+                            withContext(Dispatchers.IO) { imageSource.fetch(logId, index) }
                         }
                         call.respondBytes(image.bytes, ContentType.parse(image.contentType))
                     } catch (error: NoSuchElementException) {

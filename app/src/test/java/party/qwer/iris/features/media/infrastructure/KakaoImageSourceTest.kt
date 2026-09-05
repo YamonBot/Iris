@@ -3,8 +3,26 @@ package party.qwer.iris.features.media.infrastructure
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertFailsWith
+import org.json.JSONObject
 
 class KakaoImageSourceTest {
+    @Test
+    fun `grouped photos resolve exact index and reject mismatched arrays`() {
+        val grouped = JSONObject("""{"imageUrls":["https://talk.kakaocdn.net/a","https://talk.kakaocdn.net/b"],"mtl":["image/png","image/jpeg"],"sl":[10,20]}""")
+        val second = selectImageAttachment("27", grouped, 1)
+        assertEquals("https://talk.kakaocdn.net/b", second.getString("url"))
+        assertEquals("image/jpeg", second.getString("mt"))
+        assertEquals(20, second.getInt("s"))
+        for (index in listOf(-1, 2, 30)) {
+            assertFailsWith<IllegalArgumentException> { selectImageAttachment("27", grouped, index) }
+        }
+        assertFailsWith<IllegalArgumentException> { selectImageAttachment("2", grouped, 1) }
+        assertFailsWith<IllegalArgumentException> { selectImageAttachment("12", grouped, 0) }
+        grouped.put("sl", org.json.JSONArray("[10]"))
+        assertFailsWith<IllegalArgumentException> { selectImageAttachment("27", grouped, 0) }
+    }
+
     @Test
     fun `accepts only JPEG PNG and WebP magic bytes`() {
         val jpeg = byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte())
