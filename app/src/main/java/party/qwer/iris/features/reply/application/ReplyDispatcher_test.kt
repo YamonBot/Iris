@@ -14,12 +14,18 @@ import party.qwer.iris.features.reply.domain.*
 /** Recovery must reconcile an attempted side effect, never repeat it. */
 class ReplyDispatcherRecoveryTest {
     @Test fun processingRecoveryNeverResends() = runBlocking {
+        for (initialStatus in listOf(ReplyStatus.PROCESSING, ReplyStatus.KAKAO_DB_UNCONFIRMED)) {
+            verifyRecovery(initialStatus)
+        }
+    }
+
+    private suspend fun verifyRecovery(initialStatus: ReplyStatus) {
         for (baseline in listOf<Long?>(10L, null)) {
             for (observed in listOf<Long?>(11L, null)) {
                 val command = ReplyCommand(ReplyRequestId("recovery-test"), 42L, null,
                     ReplyPayload.Text("test-only"))
                 var currentRecord = ReplyRecord(command.requestId, command.fingerprint(),
-                    ReplyStatus.PROCESSING, baselineLogId = baseline)
+                    initialStatus, baselineLogId = baseline)
                 var sends = 0
                 var probes = 0
                 val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

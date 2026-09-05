@@ -92,7 +92,8 @@ class ReplyDispatcher(
                 if (existing != null && existing.fingerprint != fingerprint) {
                     throw ReplyRequestConflictException("request_id is already used by another payload")
                 }
-                if (existing != null && existing.status !in setOf(ReplyStatus.QUEUED, ReplyStatus.PROCESSING)) {
+                if (existing != null && existing.status !in setOf(
+                        ReplyStatus.QUEUED, ReplyStatus.PROCESSING, ReplyStatus.KAKAO_DB_UNCONFIRMED)) {
                     terminal = existing.toReceipt(command, fingerprint)
                     return@withLock
                 }
@@ -127,7 +128,8 @@ class ReplyDispatcher(
 
     private suspend fun process(command: ReplyCommand, recovered: ReplyRecord?): ReplyReceipt {
         val fingerprint = command.fingerprint()
-        if (recovered?.status == ReplyStatus.PROCESSING) {
+        if (recovered?.status in setOf(ReplyStatus.PROCESSING, ReplyStatus.KAKAO_DB_UNCONFIRMED)) {
+            requireNotNull(recovered)
             val reconciledLogId = recovered.baselineLogId?.let {
                 commitProbe.awaitOwnRow(command, it)
             }
