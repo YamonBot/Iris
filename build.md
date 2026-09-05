@@ -1,5 +1,14 @@
 # Iris build and tests
 
+Late reply reconciliation is implemented in our gateway `features/reply`
+extension, not upstream Kakao transmission code. Repeating the same request and
+payload for a `KAKAO_DB_UNCONFIRMED` record reuses its original baseline and probes
+the database without sending again. Missing evidence remains unconfirmed;
+fingerprint conflicts remain rejected. Unit recovery coverage spans both
+PROCESSING/UNCONFIRMED, present/missing baselines, and present/missing rows.
+Runtime promotion must preserve the existing ledger and prove reconciliation
+against the original request; unit success is not an Android deployment receipt.
+
 Use JDK 17 and an Android SDK containing platform 35 and build-tools 35.0.0.
 Set `JAVA_HOME` and `ANDROID_HOME` to their installed locations. Android Studio,
 an emulator, and the old separately downloaded `android-30.jar` are not needed
