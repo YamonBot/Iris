@@ -9,7 +9,6 @@ import android.service.notification.StatusBarNotification
 import kotlin.concurrent.thread
 
 class NotificationPoller {
-    private val cachedSenderIds = mutableSetOf<String>()
     private val processedNotifications = mutableMapOf<String, Long>()
 
     fun startPolling() {
@@ -54,43 +53,38 @@ class NotificationPoller {
                 continue
             }
 
-            val senderName = rawTitle ?: ""
             val subText = extras.getString(Notification.EXTRA_SUB_TEXT)
             val summaryText = extras.getString(Notification.EXTRA_SUMMARY_TEXT)
-            val room = subText ?: summaryText ?: senderName
+            val room = subText ?: summaryText ?: rawTitle.orEmpty()
 
-            var senderId = ""
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     val messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
-                    if (!messages.isNullOrEmpty()) {
-                        val messageBundle = messages[0] as? Bundle
+                    val senders = messages.orEmpty().mapNotNull { message ->
+                        val messageBundle = message as? Bundle
                         val person = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             messageBundle?.getParcelable("sender_person", Person::class.java)
                         } else {
                             @Suppress("DEPRECATION")
                             messageBundle?.getParcelable("sender_person") as? Person
                         }
-                        if (person != null) senderId = person.key ?: ""
+                        person?.let { it.key.orEmpty() to it.name?.toString().orEmpty() }
+                    }
+                    // A notification title may name the newest sender or the whole room.
+                    // Bind each ID only to the name from that same message's Person.
+                    for ((senderId, senderName) in latestSenderNames(senders)) {
+                        NamesDB.saveName(senderId, senderName, room)
                     }
                 }
             } catch (e: Exception) {
-                // pass
+                System.err.println("Iris notification identity parsing failed: ${e.javaClass.simpleName}")
+                continue
             }
 
             processedNotifications[key] = postTime
-
-            if (senderId.isNotEmpty() && !cachedSenderIds.contains(senderId)) {
-                NamesDB.saveName(senderId, senderName, room)
-                cachedSenderIds.add(senderId)
-            }
         }
 
         processedNotifications.keys.retainAll(currentActiveKeys)
-
-        if (cachedSenderIds.size > 5000) {
-            cachedSenderIds.clear()
-        }
     }
 
     private fun getActiveNotifications(): Array<StatusBarNotification> {

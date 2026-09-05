@@ -78,6 +78,21 @@ class KakaoDB {
             ?.toLongOrNull()
     }
 
+    /** Own single-image checksum evidence in one room after the send boundary. */
+    fun findOwnImageChatLogsAfter(chatId: Long, afterLogId: Long): List<Pair<Long, String>> =
+        executeQuery(
+            "SELECT _id, user_id, attachment, v FROM chat_logs WHERE _id > ? AND chat_id = ? AND type = 2 " +
+                "ORDER BY _id ASC LIMIT 64",
+            arrayOf(afterLogId.toString(), chatId.toString()),
+        ).filter {
+            runCatching { JSONObject(it["v"] ?: "{}").optBoolean("isMine") }.getOrDefault(false)
+        }.map(::decryptRow).mapNotNull { row ->
+            val id = row["_id"]?.toLongOrNull()
+            val checksum = runCatching { JSONObject(row["attachment"] ?: "{}").optString("cs") }
+                .getOrDefault("").lowercase()
+            if (id != null && checksum.matches(Regex("[0-9a-f]{40}"))) id to checksum else null
+        }
+
     /** Read and decrypt one chat-log row by local sequence id. */
     fun findChatLog(logId: Long): Map<String, String?>? {
         val rows = executeQuery(

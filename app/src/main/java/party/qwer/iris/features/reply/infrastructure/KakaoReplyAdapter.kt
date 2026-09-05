@@ -1,6 +1,8 @@
 package party.qwer.iris.features.reply.infrastructure
 
 import kotlinx.coroutines.delay
+import java.security.MessageDigest
+import java.util.Base64
 import party.qwer.iris.KakaoDB
 import party.qwer.iris.Replier
 import party.qwer.iris.features.reply.domain.KakaoReplyCommitProbe
@@ -41,12 +43,20 @@ class KakaoReplyCommitProbeAdapter(
     override fun latestLogId(): Long = kakaoDB.latestChatLogId()
 
     override suspend fun awaitOwnRow(command: ReplyCommand, afterLogId: Long): Long? {
-        val expectedText = (command.payload as? ReplyPayload.Text)?.value ?: return null
+        val expectedText = (command.payload as? ReplyPayload.Text)?.value
+        val imageChecksums = (command.payload as? ReplyPayload.Images)?.base64Values?.map {
+            MessageDigest.getInstance("SHA-1").digest(Base64.getDecoder().decode(it))
+                .joinToString("") { byte -> "%02x".format(byte) }
+        }
         val deadline = System.currentTimeMillis() + timeoutMillis
         while (System.currentTimeMillis() < deadline) {
-            kakaoDB.findOwnTextChatLogAfter(command.roomId, afterLogId, expectedText)?.let {
-                return it
+            val committed = if (expectedText != null) {
+                kakaoDB.findOwnTextChatLogAfter(command.roomId, afterLogId, expectedText)
+            } else {
+                matchingImageCommit(imageChecksums.orEmpty(),
+                    kakaoDB.findOwnImageChatLogsAfter(command.roomId, afterLogId))
             }
+            if (committed != null) return committed
             delay(pollingMillis)
         }
         return null
