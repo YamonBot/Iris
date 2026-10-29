@@ -148,7 +148,7 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                 val match = regex.find(data)
                 if (match != null && match.groups[1] != null) {
                     val referer = match.groups[1]!!.value
-                    println("IrisServer: NotificationReferer extracted: $referer")
+                    println("IrisServer: NotificationReferer extracted")
                     return referer
                 }
             }
@@ -742,7 +742,7 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                 }
             }.start(wait = false)
 
-            println("IrisServer: Started on port ${Configurable.botSocketPort}, referer=$notificationReferer")
+            println("IrisServer: Started on port ${Configurable.botSocketPort}")
             _isRunning = true
             return true
         } catch (e: Exception) {
