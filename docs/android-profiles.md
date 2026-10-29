@@ -43,6 +43,9 @@ legacy unset-profile mode remains unchanged. The profile adapter exposes the
 existing `/healthz`, `/identity/<room>/<actor>` and `/media/<message>` read protocol
 used by the shared Room API. Media validation and token rotation reuse the
 production feature implementations from YamonBot/Iris cf2191d52217a968c26f884a3af463a88348f571.
+An unset-profile daemon may explicitly opt into the same authenticated read
+protocol with `IRIS_AUTH_TOKEN_FILE`; the default remains unchanged. This supports
+isolated compatibility validation without copying one account into another profile.
 The latest upstream query/decryption and Android profile paths remain authoritative.
 This is read-protocol compatibility; it does not claim the legacy custom durable
 reply-receipt protocol or native Kakao authentication has been accepted.

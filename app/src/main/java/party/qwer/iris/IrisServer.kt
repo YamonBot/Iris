@@ -81,9 +81,8 @@ import java.io.File
  *  - /ws 전달은 non-blocking fanout — 느린 클라이언트 하나가 DB 폴링을 막을 수 없다.
  */
 class IrisServer(private val kakaoDB: KakaoDB) {
-    private val profileToken = RuntimeProfile.scope?.let {
-        party.qwer.iris.features.security.infrastructure.BearerTokenFile(File(it.tokenPath))
-    }
+    private val bearerToken = (RuntimeProfile.scope?.tokenPath ?: System.getenv("IRIS_AUTH_TOKEN_FILE"))
+        ?.let { party.qwer.iris.features.security.infrastructure.BearerTokenFile(File(it)) }
 
     private val wsFanout = WsFanout("IrisServer")
 
@@ -195,9 +194,9 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                 }
 
                 routing {
-                    if (profileToken != null) {
+                    if (bearerToken != null) {
                         intercept(ApplicationCallPipeline.Plugins) {
-                            if (!profileToken.accepts(context.request.header(HttpHeaders.Authorization))) {
+                            if (!bearerToken.accepts(context.request.header(HttpHeaders.Authorization))) {
                                 context.respond(HttpStatusCode.Unauthorized,
                                     CommonErrorResponse(message = "missing or invalid bearer token"))
                                 finish()
