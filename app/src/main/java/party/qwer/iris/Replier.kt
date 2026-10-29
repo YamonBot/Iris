@@ -28,7 +28,8 @@ import party.qwer.iris.Replier.Companion.SendMessageRequest
 
 // SendMsg : ye-seola/go-kdb
 
-internal const val IMAGE_DIR_PATH = "/sdcard/Android/data/com.kakao.talk/files"
+internal val IMAGE_DIR_PATH: String
+    get() = RuntimeProfile.scope?.mediaPath ?: "/sdcard/Android/data/com.kakao.talk/files"
 
 class Replier {
     companion object {

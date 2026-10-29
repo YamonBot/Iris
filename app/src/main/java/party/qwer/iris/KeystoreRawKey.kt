@@ -46,6 +46,7 @@ object KeystoreRawKey {
      * 구별되지 않아 "key error" 로 오인되기 쉽다).
      */
     internal fun kakaoUid(): Int {
+        RuntimeProfile.scope?.let { return it.appUid }
         System.getenv("KAKAOTALK_APP_UID")?.trim()?.toIntOrNull()?.let {
             if (it in 0..200_000) return it
             System.err.println("KeystoreRawKey: ignoring out-of-range KAKAOTALK_APP_UID=$it")
@@ -95,7 +96,7 @@ object KeystoreRawKey {
         }
         // root 없이 alias 가 reachable 한 상태(HAYUL shared-uid) — 프레임워크 keystore 로
         // 직접 HMAC 을 탄다 (동일 수식: K = Mac_rawKey(message)).
-        return hmacViaFrameworkKeyStore(alias, message)
+        return if (RuntimeProfile.scope == null) hmacViaFrameworkKeyStore(alias, message) else null
     }
 
     /** AndroidKeyStore 의 SecretKeyEntry(alias) 로 HMAC-SHA256(message) — 실패 시 null. */

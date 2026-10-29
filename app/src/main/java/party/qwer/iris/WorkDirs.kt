@@ -14,13 +14,15 @@ object WorkDirs {
     private const val DEFAULT_ROOT = "/data/local/tmp/Iris.work"
 
     /** root 자체는 만들지 않는다 — 존재 확인만 하는 호출자(NativeLib 후보 로그 등)용. */
-    val root: File = File(System.getenv("IRIS_WORK_DIR")?.takeIf { it.isNotBlank() } ?: DEFAULT_ROOT)
+    val root: File = File(RuntimeProfile.scope?.workPath
+        ?: System.getenv("IRIS_WORK_DIR")?.takeIf { it.isNotBlank() } ?: DEFAULT_ROOT)
 
     /**
      * owner-only(0700) 디렉터리를 만들어 반환한다. 만들 수 없거나 여전히 group/world 에
      * 열려 있으면 null — 호출자는 조용히 기능을 끄지, 평문 데이터를 world-readable 에 쓰지 않는다.
      */
     fun sub(name: String): File? {
+        if (RuntimeProfile.scope != null && root.canonicalFile != root.absoluteFile) return null
         val dir = if (name.isEmpty()) root else File(root, name)
         if (!dir.exists() && !dir.mkdirs()) return null
         if (!dir.isDirectory) return null
