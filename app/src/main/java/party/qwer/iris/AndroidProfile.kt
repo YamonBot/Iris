@@ -5,6 +5,7 @@ internal data class AndroidProfile(val userId: Int, val appUid: Int, val expecte
     val dataPath = "/data/user/$userId/com.kakao.talk/"
     val workPath = "/data/local/tmp/iris-users/$userId"
     val configPath = "$workPath/config.json"
+    val tokenPath = "$workPath/tokens"
     val mediaPath = "/storage/emulated/$userId/Android/data/com.kakao.talk/files/iris"
     val port = 3000 + userId
 
@@ -30,6 +31,9 @@ internal data class AndroidProfile(val userId: Int, val appUid: Int, val expecte
                 }
                 require(env["IRIS_WORK_DIR"] == null || env["IRIS_WORK_DIR"] == profile.workPath) {
                     "Profile working files cannot use another scope's path"
+                }
+                require(env["IRIS_AUTH_TOKEN_FILE"] == null || env["IRIS_AUTH_TOKEN_FILE"] == profile.tokenPath) {
+                    "Profile authentication cannot use another scope's token file"
                 }
             }
         }

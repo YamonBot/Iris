@@ -31,3 +31,24 @@ This change has not qualified modern KakaoTalk work-profile login, locked-user
 behavior, native sending/media permissions, or account changes during a running
 session. Those require device acceptance before production use. Android profiles
 share the installed package version, so an APK upgrade requires checking all users.
+
+
+## Authenticated MCP read compatibility
+
+Explicit profiles require a token projection at
+`/data/local/tmp/iris-users/<user>/tokens`. Another profile or company token path
+is rejected. Missing tokens fail startup before workers are launched. All profile
+HTTP and WebSocket routes require that bearer; the current upstream daemon's
+legacy unset-profile mode remains unchanged. The profile adapter exposes the
+existing `/healthz`, `/identity/<room>/<actor>` and `/media/<message>` read protocol
+used by the shared Room API. Media validation and token rotation reuse the
+production feature implementations from YamonBot/Iris cf2191d52217a968c26f884a3af463a88348f571.
+The latest upstream query/decryption and Android profile paths remain authoritative.
+This is read-protocol compatibility; it does not claim the legacy custom durable
+reply-receipt protocol or native Kakao authentication has been accepted.
+
+The installed Android package version is shared across managed profiles. Validate
+a new signed Kakao APK set in an isolated disposable Android before upgrading the
+shared package. Creating or launching a profile does not prove a personal account
+is linked. Complete the supported subdevice flow and verify actual source account,
+room reads and media before publishing the personal MCP.

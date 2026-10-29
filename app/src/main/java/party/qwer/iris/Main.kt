@@ -26,6 +26,7 @@ class Main {
 
                 if (profile != null) {
                     check(WorkDirs.sub("") != null) { "Profile working directory is unavailable" }
+                    party.qwer.iris.features.security.infrastructure.BearerTokenFile(java.io.File(profile.tokenPath))
                     require(args.isEmpty() || args[0].toIntOrNull() == profile.port) {
                         "Explicit profile must use its dedicated port"
                     }
@@ -78,6 +79,7 @@ class Main {
                 }
 
                 if (!server.start()) {
+                    if (profile != null) error("Profile HTTP server failed to start")
                     System.err.println("Iris: HTTP server failed to start — process stays up for diagnostics")
                 }
                 println("Iris Server started")

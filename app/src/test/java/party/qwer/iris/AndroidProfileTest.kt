@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AndroidProfileTest {
+    @Test fun authenticationProjectionCannotUseCompanyTokens() {
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidProfile.fromEnvironment(personal + ("IRIS_AUTH_TOKEN_FILE" to "/data/local/tmp/iris.tokens"))
+        }
+        assertEquals("/data/local/tmp/iris-users/10/tokens",
+            AndroidProfile.fromEnvironment(personal)!!.tokenPath)
+    }
     private val personal = mapOf(
         "IRIS_ANDROID_USER_ID" to "10",
         "KAKAOTALK_APP_UID" to "1010089",
