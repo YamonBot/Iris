@@ -243,10 +243,20 @@ class Replier {
                 throw IOException("image dir not writable: ${IMAGE_DIR_PATH}")
             }
 
+            val profile = RuntimeProfile.scope
+            if (profile != null) {
+                android.system.Os.chown(picDir.absolutePath, profile.appUid, 1078)
+                android.system.Os.chmod(picDir.absolutePath, 0x1F8) // 0770, app-owned external data.
+            }
             val used = mutableSetOf<String>()
             val uris = items.map { item ->
                 val file = MediaPayload.writeTo(picDir, item, used)
-                val uri = Uri.fromFile(file)
+                val sharedFile = if (profile != null) {
+                    android.system.Os.chown(file.absolutePath, profile.appUid, 1078)
+                    android.system.Os.chmod(file.absolutePath, 0x1A0) // 0640, no world-readable grant.
+                    File(profile.mediaUriPath, file.name)
+                } else file
+                val uri = Uri.fromFile(sharedFile)
                 mediaScan(uri)
                 uri
             }

@@ -196,10 +196,11 @@ object MediaPayload {
         uris: ArrayList<Uri>,
         room: Long,
         grantRead: Boolean
-    ): Intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+    ): Intent = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
         setPackage("com.kakao.talk")
         type = intentType(items.firstOrNull()?.kind ?: MediaKind.IMAGE)
-        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        if (uris.size == 1) putExtra(Intent.EXTRA_STREAM, uris.single())
+        else putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
         putExtra("key_id", room)
         putExtra("key_type", 1)
         putExtra("key_from_direct_share", true)
