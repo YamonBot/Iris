@@ -84,6 +84,7 @@ class Replier {
                     for (request in messageChannel) {
                         try {
                             mutex.withLock {
+                                RuntimeProfile.requireAvailable()
                                 request.send()
                                 sent.incrementAndGet()
                                 delay(Configurable.messageSendRate)

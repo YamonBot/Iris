@@ -52,6 +52,7 @@ class Main {
                 val kakaoDb = KakaoDB()
                 if (profile != null) {
                     profile.requireOwner(kakaoDb.botUserId)
+                    RuntimeProfile.session = profile.sessionGuard(kakaoDb)
                 }
 
                 Replier.startMessageSender()
