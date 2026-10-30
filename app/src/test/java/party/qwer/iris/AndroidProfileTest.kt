@@ -29,7 +29,8 @@ class AndroidProfileTest {
         assertEquals("/data/user/10/com.kakao.talk/", profile.dataPath)
         assertEquals("/data/local/tmp/iris-users/10/config.json", profile.configPath)
         assertEquals("/data/local/tmp/iris-users/10", profile.workPath)
-        assertEquals("/storage/emulated/10/Android/data/com.kakao.talk/files/iris", profile.mediaPath)
+        assertEquals("/data/media/10/Android/data/com.kakao.talk/files/iris", profile.mediaPath)
+        assertEquals("/storage/emulated/10/Android/data/com.kakao.talk/files/iris", profile.mediaUriPath)
         assertEquals(3010, profile.port)
     }
 

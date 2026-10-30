@@ -6,7 +6,10 @@ internal data class AndroidProfile(val userId: Int, val appUid: Int, val expecte
     val workPath = "/data/local/tmp/iris-users/$userId"
     val configPath = "$workPath/config.json"
     val tokenPath = "$workPath/tokens"
-    val mediaPath = "/storage/emulated/$userId/Android/data/com.kakao.talk/files/iris"
+    // Root daemon cannot traverse another user's FUSE mount. Write the physical
+    // app-owned backing directory; Kakao receives its normal per-user public URI.
+    val mediaPath = "/data/media/$userId/Android/data/com.kakao.talk/files/iris"
+    val mediaUriPath = "/storage/emulated/$userId/Android/data/com.kakao.talk/files/iris"
     val port = 3000 + userId
 
     fun requireOwner(actualBotId: Long) {
