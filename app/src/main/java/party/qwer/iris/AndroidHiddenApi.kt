@@ -342,9 +342,13 @@ class AndroidHiddenApi {
         }
 
         fun isUserUnlocked(userId: Int): Boolean = runCatching {
-            userManager.javaClass.getMethod("isUserUnlocked", Int::class.javaPrimitiveType)
+            Class.forName("android.os.IUserManager")
+                .getMethod("isUserUnlocked", Int::class.javaPrimitiveType)
                 .invoke(userManager, userId) == true
-        }.getOrDefault(false)
+        }.getOrElse {
+            System.err.println("Iris profile unlock check failed: ${it.javaClass.simpleName}")
+            false
+        }
 
         private fun getService(name: String): IBinder {
             val method = Class.forName("android.os.ServiceManager")
