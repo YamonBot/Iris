@@ -336,6 +336,20 @@ class AndroidHiddenApi {
             throw Exception(errorMsg)
         }
 
+        private val userManager by lazy {
+            val stub = Class.forName("android.os.IUserManager\$Stub")
+            stub.getMethod("asInterface", IBinder::class.java).invoke(null, getService("user"))
+        }
+
+        fun isUserUnlocked(userId: Int): Boolean = runCatching {
+            Class.forName("android.os.IUserManager")
+                .getMethod("isUserUnlocked", Int::class.javaPrimitiveType)
+                .invoke(userManager, userId) == true
+        }.getOrElse {
+            System.err.println("Iris profile unlock check failed: ${it.javaClass.simpleName}")
+            false
+        }
+
         private fun getService(name: String): IBinder {
             val method = Class.forName("android.os.ServiceManager")
                 .getMethod("getService", String::class.java)

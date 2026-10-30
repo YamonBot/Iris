@@ -84,6 +84,9 @@ class KakaoDB {
             Configurable.markBotIdResolved(value)
         }
 
+    internal fun currentBotUserId(): Long =
+        resolveBotUserId { sql -> connection.rawQuery(sql, null) } ?: 0L
+
     val botUserId: Long
         get() {
             detectedBotId?.let { return it }

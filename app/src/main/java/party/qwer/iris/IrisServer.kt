@@ -114,7 +114,11 @@ class IrisServer(private val kakaoDB: KakaoDB) {
     private var serverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** WS 이벤트 전달 (non-blocking). @return 버퍼 만충으로 폐기한 건수. */
-    fun broadcastToClients(message: String): Long = wsFanout.publish(message)
+    fun broadcastToClients(message: String): Long {
+        if (wsFanout.subscriberCount == 0) return 0L
+        if (runCatching { RuntimeProfile.requireAvailable() }.isFailure) return 0L
+        return wsFanout.publish(message)
+    }
 
     /** ws 에 붙어있는 클라이언트 수. */
     val wsSubscribers: Int get() = wsFanout.subscriberCount
@@ -200,6 +204,12 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                                 context.respond(HttpStatusCode.Unauthorized,
                                     CommonErrorResponse(message = "missing or invalid bearer token"))
                                 finish()
+                                return@intercept
+                            }
+                            if (runCatching { RuntimeProfile.requireAvailable() }.isFailure) {
+                                context.respond(HttpStatusCode.ServiceUnavailable,
+                                    CommonErrorResponse(message = "selected profile session is unavailable"))
+                                finish()
                             }
                         }
                         mcpReadRoutes(kakaoDB)
@@ -211,6 +221,7 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                         val sub = wsFanout.subscribe()
                         try {
                             for (msg in sub.channel) {
+                                RuntimeProfile.requireAvailable()
                                 send(msg)
                             }
                         } finally {

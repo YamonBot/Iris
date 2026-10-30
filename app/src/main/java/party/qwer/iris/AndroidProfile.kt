@@ -45,4 +45,10 @@ internal data class AndroidProfile(val userId: Int, val appUid: Int, val expecte
 
 internal object RuntimeProfile {
     val scope: AndroidProfile? by lazy { AndroidProfile.fromEnvironment(System.getenv()) }
+    @Volatile var session: ProfileSessionGuard? = null
+
+    fun requireAvailable() {
+        if (scope != null) checkNotNull(session) { "Profile session is not initialized" }.requireAvailable()
+    }
+
 }
