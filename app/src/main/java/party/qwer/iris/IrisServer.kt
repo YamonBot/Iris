@@ -6,6 +6,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.install
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
@@ -13,6 +14,7 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
+import io.ktor.server.request.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.delete
@@ -79,6 +81,8 @@ import java.io.File
  *  - /ws 전달은 non-blocking fanout — 느린 클라이언트 하나가 DB 폴링을 막을 수 없다.
  */
 class IrisServer(private val kakaoDB: KakaoDB) {
+    private val bearerToken = (RuntimeProfile.scope?.tokenPath ?: System.getenv("IRIS_AUTH_TOKEN_FILE"))
+        ?.let { party.qwer.iris.features.security.infrastructure.BearerTokenFile(File(it)) }
 
     private val wsFanout = WsFanout("IrisServer")
 
@@ -144,7 +148,7 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                 val match = regex.find(data)
                 if (match != null && match.groups[1] != null) {
                     val referer = match.groups[1]!!.value
-                    println("IrisServer: NotificationReferer extracted: $referer")
+                    println("IrisServer: NotificationReferer extracted")
                     return referer
                 }
             }
@@ -190,6 +194,16 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                 }
 
                 routing {
+                    if (bearerToken != null) {
+                        intercept(ApplicationCallPipeline.Plugins) {
+                            if (!bearerToken.accepts(context.request.header(HttpHeaders.Authorization))) {
+                                context.respond(HttpStatusCode.Unauthorized,
+                                    CommonErrorResponse(message = "missing or invalid bearer token"))
+                                finish()
+                            }
+                        }
+                        mcpReadRoutes(kakaoDB)
+                    }
                     // ── WebSocket ──────────────────────────────
                     webSocket("/ws") {
                         // 연결별 수신 채널 — 느린 클라이언트 하나가 다른 connection/
@@ -728,7 +742,7 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                 }
             }.start(wait = false)
 
-            println("IrisServer: Started on port ${Configurable.botSocketPort}, referer=$notificationReferer")
+            println("IrisServer: Started on port ${Configurable.botSocketPort}")
             _isRunning = true
             return true
         } catch (e: Exception) {

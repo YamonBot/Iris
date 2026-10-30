@@ -14,9 +14,24 @@ class Main {
     companion object {
         @JvmStatic
         fun main(args: Array<String>) {
+            val profile = try {
+                RuntimeProfile.scope
+            } catch (error: IllegalArgumentException) {
+                System.err.println("Iris profile configuration rejected: ${error.message}")
+                kotlin.system.exitProcess(78)
+            }
             try {
                 // 데몬 stdout/stderr 전체를 로그 버퍼에 담아 /process-status 로 노출한다.
                 RuntimeLog.captureStdout("Iris")
+
+                if (profile != null) {
+                    check(WorkDirs.sub("") != null) { "Profile working directory is unavailable" }
+                    party.qwer.iris.features.security.infrastructure.BearerTokenFile(java.io.File(profile.tokenPath))
+                    require(args.isEmpty() || args[0].toIntOrNull() == profile.port) {
+                        "Explicit profile must use its dedicated port"
+                    }
+                    Configurable.botSocketPort = profile.port
+                }
 
                 // 실행 인자(args[0])로 서버 포트를 지정할 수 있다. 기동 스크립트가 포트를
                 // config 파일에 쓸 수 없는 경우의 유일한 전달 경로.
@@ -34,10 +49,13 @@ class Main {
                 // exception 으로 죽는 대신 startup 로그에 원인이 남는다.
                 PathUtils.precompute()
 
+                val kakaoDb = KakaoDB()
+                if (profile != null) {
+                    profile.requireOwner(kakaoDb.botUserId)
+                }
+
                 Replier.startMessageSender()
                 println("Message sender thread started")
-
-                val kakaoDb = KakaoDB()
 
                 val server = IrisServer(kakaoDb)
                 // ISSUE-15: poller → WS 브로드캐스트는 non-blocking — ObserverHelper 가
@@ -61,6 +79,7 @@ class Main {
                 }
 
                 if (!server.start()) {
+                    if (profile != null) error("Profile HTTP server failed to start")
                     System.err.println("Iris: HTTP server failed to start — process stays up for diagnostics")
                 }
                 println("Iris Server started")
@@ -81,6 +100,7 @@ class Main {
             } catch (e: Exception) {
                 System.err.println("Iris Error")
                 e.printStackTrace()
+                if (profile != null) kotlin.system.exitProcess(1)
             }
         }
     }

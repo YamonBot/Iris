@@ -497,6 +497,15 @@ class KakaoDB {
         }
     }
 
+    /** Exact image source lookup, shared with the production MCP adapter. */
+    fun findChatLog(logId: Long): Map<String, String?>? {
+        require(logId > 0) { "log id must be positive" }
+        return executeQuery(
+            "SELECT _id, type, user_id, attachment, v FROM chat_logs WHERE _id = ? LIMIT 1",
+            arrayOf(logId.toString()),
+        ).firstOrNull()?.let(::decryptRow)
+    }
+
     fun logToDict(logId: Long): Map<String, String?> {
         warnIfPathDrifted()
         val dict: MutableMap<String, String?> = HashMap()

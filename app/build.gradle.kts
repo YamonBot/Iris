@@ -72,6 +72,8 @@ android.applicationVariants.all {
 
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation(kotlin("test-junit"))
     implementation(libs.kotlinx.serialization.json)
 
     implementation(libs.ktor.server.netty)

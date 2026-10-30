@@ -45,7 +45,7 @@ class AndroidHiddenApi {
          * UserHandle.myUserId() 는 hidden 이라 reflection, uid 가 루트(0)면 user 0.
          */
         private val currentUserId: Int by lazy {
-            runCatching {
+            RuntimeProfile.scope?.userId ?: runCatching {
                 Class.forName("android.os.UserHandle")
                     .getMethod("myUserId")
                     .invoke(null) as Int
