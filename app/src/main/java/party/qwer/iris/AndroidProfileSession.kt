@@ -18,7 +18,10 @@ internal fun AndroidProfile.sessionGuard(database: KakaoDB): ProfileSessionGuard
             check(file.canonicalPath == dataPath + relative) { "Profile file path changed" }
             val stat = Os.stat(file.path)
             check(stat.st_uid == appUid) { "Profile file owner changed" }
-            "${stat.st_dev}:${stat.st_ino}:${stat.st_uid}"
+            // SharedPreferences atomically replaces XML for unrelated settings.
+            // Pin its owner and selected login value, rather than its transient inode.
+            if (relative.startsWith("databases/")) "${stat.st_dev}:${stat.st_ino}:${stat.st_uid}"
+            else stat.st_uid.toString()
         }
         val preferences = File(root, files.last()).readText()
         val referer = Regex("""<string name="NotificationReferer">(.*?)</string>""")
