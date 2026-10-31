@@ -55,3 +55,24 @@ a new signed Kakao APK set in an isolated disposable Android before upgrading th
 shared package. Creating or launching a profile does not prove a personal account
 is linked. Complete the supported subdevice flow and verify actual source account,
 room reads and media before publishing the personal MCP.
+
+## Durable text and image replies
+
+Requests with `request_id` reuse the production reply dispatcher, ledger and
+commit probe from YamonBot/Iris `cf2191d52217a968c26f884a3af463a88348f571`.
+The domain, dispatcher, file ledger, image checksum matching and fixed-window
+chat-log paging retain the same implementations. The Android adapter adds the
+profile availability fence before sending and while awaiting commit evidence.
+
+Each explicit profile stores its ledger at
+`/data/local/tmp/iris-users/<user>/reply-<expected-bot-id>.jsonl`.
+`IRIS_REPLY_LEDGER_FILE` cannot override this with another profile's path, and
+startup rejects a canonical-path redirection. The dispatcher persists intent
+before the side effect, replays matching completed requests, rejects conflicting
+payloads, and reconciles interrupted attempts without sending them again.
+
+The receipt confirms a matching local Kakao database row, not recipient delivery.
+Legacy requests without `request_id` retain their existing `Enqueued` response;
+they do not acquire durability guarantees. Durable replies support text and
+single/grouped raster images. Device acceptance and shared Room API/MCP write
+tools remain separate release gates.

@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonPrimitive
+import party.qwer.iris.features.reply.infrastructure.imageCommitChecksums
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -63,6 +64,50 @@ class KakaoDB {
             )
         }
     }
+
+    fun latestChatLogId(): Long {
+        RuntimeProfile.requireAvailable()
+        return connection.rawQuery(
+            "SELECT COALESCE(MAX(_id), 0) FROM chat_logs", null
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
+    }
+
+    /** First exact own-text row committed in a room after a sequence boundary. */
+    fun findOwnTextChatLogAfter(chatId: Long, afterLogId: Long, text: String): Long? {
+        RuntimeProfile.requireAvailable()
+        val rows = chatLogPages(afterLogId, latestChatLogId()) { cursor, throughId ->
+            executeQuery(
+                "SELECT _id, user_id, message, v FROM chat_logs WHERE _id > ? AND _id <= ? AND chat_id = ? " +
+                    "ORDER BY _id ASC LIMIT 64",
+                arrayOf(cursor.toString(), throughId.toString(), chatId.toString()),
+            )
+        }
+        return rows
+            .filter {
+                runCatching { JSONObject(it["v"] ?: "{}").optBoolean("isMine") }
+                    .getOrDefault(false)
+            }
+            .map(::decryptRow)
+            .firstOrNull { it["message"] == text }
+            ?.get("_id")
+            ?.toLongOrNull()
+    }
+
+    /** Own single or grouped image checksum evidence after the send boundary. */
+    fun findOwnImageChatLogsAfter(chatId: Long, afterLogId: Long): List<Pair<Long, List<String>>> =
+        chatLogPages(afterLogId, latestChatLogId()) { cursor, throughId ->
+            executeQuery(
+                "SELECT _id, type, user_id, attachment, v FROM chat_logs WHERE _id > ? AND _id <= ? AND chat_id = ? AND type IN (2, 27) " +
+                    "ORDER BY _id ASC LIMIT 64",
+                arrayOf(cursor.toString(), throughId.toString(), chatId.toString()),
+            )
+        }.filter {
+            runCatching { JSONObject(it["v"] ?: "{}").optBoolean("isMine") }.getOrDefault(false)
+        }.map(::decryptRow).mapNotNull { row ->
+            val id = row["_id"]?.toLongOrNull()
+            val checksums = imageCommitChecksums(row["type"], row["attachment"] ?: "{}")
+            if (id != null && checksums.isNotEmpty()) id to checksums else null
+        }.toList()
 
     @Volatile
     private var lastDriftCheckMs: Long = 0

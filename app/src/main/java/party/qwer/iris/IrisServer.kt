@@ -1,5 +1,19 @@
 package party.qwer.iris
 
+import android.util.Base64
+import kotlinx.serialization.json.jsonArray
+import party.qwer.iris.features.reply.application.ReplyDispatcher
+import party.qwer.iris.features.reply.application.ReplyRequestConflictException
+import party.qwer.iris.features.reply.application.ReplyQueueFullException
+import party.qwer.iris.features.reply.domain.ReplyCommand
+import party.qwer.iris.features.reply.domain.ReplyPayload
+import party.qwer.iris.features.reply.domain.ReplyRequestId
+import party.qwer.iris.features.reply.infrastructure.FileReplyLedger
+import party.qwer.iris.features.reply.infrastructure.KakaoReplySenderAdapter
+import party.qwer.iris.features.reply.infrastructure.KakaoReplyCommitProbeAdapter
+import party.qwer.iris.model.ReplyRequest
+import party.qwer.iris.model.ReplyResponse
+import party.qwer.iris.model.toWire
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -80,9 +94,53 @@ import java.io.File
  *    — 모든 변경부는 @Synchronized 로 직렬화하고 공개 필드는 @Volatile 로 발행한다.
  *  - /ws 전달은 non-blocking fanout — 느린 클라이언트 하나가 DB 폴링을 막을 수 없다.
  */
+private const val MAX_REPLY_BODY_BYTES = 28L * 1024 * 1024
+private const val MAX_REPLY_TEXT_CHARS = 4_096
+private const val MAX_REPLY_IMAGES = 4
+private const val MAX_IMAGE_BASE64_CHARS = 14 * 1024 * 1024
+private const val MAX_IMAGE_BYTES = 10 * 1024 * 1024
+private const val MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
+
+private fun isSupportedImage(bytes: ByteArray): Boolean {
+    val png = bytes.size >= 8 && bytes.sliceArray(0..7).contentEquals(
+        byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+    )
+    val jpeg = bytes.size >= 3 && bytes[0] == 0xff.toByte() &&
+        bytes[1] == 0xd8.toByte() && bytes[2] == 0xff.toByte()
+    val webp = bytes.size >= 12 && bytes.copyOfRange(0, 4).decodeToString() == "RIFF" &&
+        bytes.copyOfRange(8, 12).decodeToString() == "WEBP"
+    return png || jpeg || webp
+}
+
+private fun validateImages(values: List<String>): List<String> {
+    require(values.isNotEmpty() && values.size <= MAX_REPLY_IMAGES) {
+        "image count must be between 1 and $MAX_REPLY_IMAGES"
+    }
+    var totalBytes = 0
+    values.forEach { value ->
+        require(value.isNotBlank() && value.length <= MAX_IMAGE_BASE64_CHARS) {
+            "encoded image exceeds size limit"
+        }
+        val bytes = try {
+            Base64.decode(value, Base64.DEFAULT)
+        } catch (error: IllegalArgumentException) {
+            throw IllegalArgumentException("image must be valid base64", error)
+        }
+        require(bytes.isNotEmpty() && bytes.size <= MAX_IMAGE_BYTES && isSupportedImage(bytes)) {
+            "image must be JPEG, PNG, or WebP within the size limit"
+        }
+        totalBytes += bytes.size
+        require(totalBytes <= MAX_TOTAL_IMAGE_BYTES) { "total image payload exceeds size limit" }
+    }
+    return values
+}
+
+
 class IrisServer(private val kakaoDB: KakaoDB) {
     private val bearerToken = (RuntimeProfile.scope?.tokenPath ?: System.getenv("IRIS_AUTH_TOKEN_FILE"))
         ?.let { party.qwer.iris.features.security.infrastructure.BearerTokenFile(File(it)) }
+
+    private lateinit var replyDispatcher: ReplyDispatcher
 
     private val wsFanout = WsFanout("IrisServer")
 
@@ -112,6 +170,70 @@ class IrisServer(private val kakaoDB: KakaoDB) {
      */
     @Volatile
     private var serverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private suspend fun replyDurably(call: ApplicationCall, replyRequest: ReplyRequest) {
+        val command = try {
+            val roomId = replyRequest.room.toLong().also {
+                require(it > 0) { "room must be a positive integer" }
+            }
+            val threadId = replyRequest.threadId?.toLong()?.also {
+                require(it > 0) { "threadId must be a positive integer" }
+            }
+            val payload = when (replyRequest.type) {
+                "text" -> ReplyPayload.Text(
+                    replyRequest.data.jsonPrimitive.content.also {
+                        require(it.isNotBlank() && it.length <= MAX_REPLY_TEXT_CHARS) {
+                            "text must be 1-$MAX_REPLY_TEXT_CHARS characters"
+                        }
+                    }
+                )
+                "image" -> ReplyPayload.Images(
+                    validateImages(listOf(replyRequest.data.jsonPrimitive.content))
+                )
+                "image_multiple" -> ReplyPayload.Images(
+                    validateImages(replyRequest.data.jsonArray.map { it.jsonPrimitive.content })
+                )
+                else -> throw IllegalArgumentException("durable replies support text and images only")
+            }
+            RuntimeProfile.requireAvailable()
+            ReplyCommand(
+                ReplyRequestId(requireNotNull(replyRequest.request_id)),
+                roomId,
+                threadId,
+                payload,
+            )
+        } catch (error: Exception) {
+            return call.respond(
+                HttpStatusCode.BadRequest,
+                CommonErrorResponse(message = error.message ?: "invalid reply request"),
+            )
+        }
+
+        try {
+            val receipt = replyDispatcher.dispatch(command)
+            call.respond(
+                if (receipt.success) HttpStatusCode.OK else HttpStatusCode.BadGateway,
+                ReplyResponse(
+                    receipt.success,
+                    receipt.requestId.value,
+                    receipt.status.wireValue,
+                    receipt.kakaoLogId,
+                    receipt.duplicate,
+                    receipt.message,
+                ).toWire(),
+            )
+        } catch (error: ReplyRequestConflictException) {
+            call.respond(
+                HttpStatusCode.Conflict,
+                CommonErrorResponse(message = error.message ?: "request_id conflict"),
+            )
+        } catch (error: ReplyQueueFullException) {
+            call.respond(
+                HttpStatusCode.ServiceUnavailable,
+                CommonErrorResponse(message = error.message ?: "reply queue is full"),
+            )
+        }
+    }
 
     /** WS 이벤트 전달 (non-blocking). @return 버퍼 만충으로 폐기한 건수. */
     fun broadcastToClients(message: String): Long {
@@ -174,6 +296,21 @@ class IrisServer(private val kakaoDB: KakaoDB) {
             }
 
             notificationReferer = extractNotificationReferer()
+            RuntimeProfile.requireAvailable()
+            val ledgerPath = RuntimeProfile.scope?.replyLedgerPath
+                ?: System.getenv("IRIS_REPLY_LEDGER_FILE")
+                ?: "/data/local/tmp/iris-reply-ledger.jsonl"
+            val ledgerFile = File(ledgerPath)
+            check(ledgerFile.canonicalPath == ledgerFile.absolutePath) {
+                "Reply ledger must not redirect to another profile"
+            }
+            replyDispatcher = ReplyDispatcher(
+                KakaoReplySenderAdapter(notificationReferer),
+                KakaoReplyCommitProbeAdapter(kakaoDB),
+                FileReplyLedger(ledgerFile),
+                { Configurable.messageSendRate },
+                scope = serverScope,
+            )
             val lenientJson = Json { ignoreUnknownKeys = true }
 
             // 기본 바인드는 0.0.0.0 — 원격 클라이언트가 기기 IP:포트로 접속한다.
@@ -231,7 +368,17 @@ class IrisServer(private val kakaoDB: KakaoDB) {
 
                     // ── 답장 ───────────────────────────────────
                     post("/reply") {
+                        val declaredLength = call.request.header(HttpHeaders.ContentLength)?.toLongOrNull()
+                        if (declaredLength != null && declaredLength > MAX_REPLY_BODY_BYTES) {
+                            call.respond(HttpStatusCode.PayloadTooLarge,
+                                CommonErrorResponse(message = "reply request exceeds size limit"))
+                            return@post
+                        }
                         val req = call.receive<party.qwer.iris.model.ReplyRequest>()
+                        if (req.request_id != null) {
+                            replyDurably(call, req)
+                            return@post
+                        }
                         val roomId = req.room
 
                         when (req.type) {
