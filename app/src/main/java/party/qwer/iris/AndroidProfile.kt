@@ -4,6 +4,7 @@ package party.qwer.iris
 internal data class AndroidProfile(val userId: Int, val appUid: Int, val expectedBotId: Long) {
     val dataPath = "/data/user/$userId/com.kakao.talk/"
     val workPath = "/data/local/tmp/iris-users/$userId"
+    val replyLedgerPath = "$workPath/reply-${expectedBotId}.jsonl"
     val configPath = "$workPath/config.json"
     val tokenPath = "$workPath/tokens"
     // Root daemon cannot traverse another user's FUSE mount. Write the physical
@@ -29,6 +30,9 @@ internal data class AndroidProfile(val userId: Int, val appUid: Int, val expecte
             val bot = env["IRIS_EXPECTED_BOT_ID"]?.toLongOrNull()
             require(bot != null && bot > 0) { "IRIS_EXPECTED_BOT_ID is required for profile isolation" }
             return AndroidProfile(user, uid, bot).also { profile ->
+                require(env["IRIS_REPLY_LEDGER_FILE"] == null || env["IRIS_REPLY_LEDGER_FILE"] == profile.replyLedgerPath) {
+                    "Profile reply ledger cannot use another scope's path"
+                }
                 require(env["IRIS_CONFIG_PATH"] == null || env["IRIS_CONFIG_PATH"] == profile.configPath) {
                     "Profile configuration cannot use another scope's path"
                 }

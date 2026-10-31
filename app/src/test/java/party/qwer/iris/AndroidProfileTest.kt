@@ -22,6 +22,18 @@ class AndroidProfileTest {
         assertNull(AndroidProfile.fromEnvironment(mapOf("KAKAOTALK_APP_UID" to "10089")))
     }
 
+    @Test fun replyLedgerIsIsolatedByAndroidUserAndKakaoOwner() {
+        val profile = AndroidProfile.fromEnvironment(personal)!!
+        assertEquals("/data/local/tmp/iris-users/10/reply-123456789.jsonl", profile.replyLedgerPath)
+        val otherOwner = AndroidProfile.fromEnvironment(personal + ("IRIS_EXPECTED_BOT_ID" to "987654321"))!!
+        assertNotEquals(profile.replyLedgerPath, otherOwner.replyLedgerPath)
+        for (path in listOf("/data/local/tmp/iris-reply-ledger.jsonl", otherOwner.replyLedgerPath)) {
+            assertThrows(IllegalArgumentException::class.java) {
+                AndroidProfile.fromEnvironment(personal + ("IRIS_REPLY_LEDGER_FILE" to path))
+            }
+        }
+    }
+
     @Test fun secondaryProfileScopesEveryOwnedPathAndPort() {
         val profile = AndroidProfile.fromEnvironment(personal)!!
         assertEquals(10, profile.userId)

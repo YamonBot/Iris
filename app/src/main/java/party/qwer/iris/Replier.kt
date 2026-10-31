@@ -169,6 +169,17 @@ class Replier {
             dispatchStartService(intent)
         }
 
+        /** Direct side effect used only by the bounded durable dispatcher. */
+        fun sendMessageNow(referer: String, chatId: Long, msg: String, threadId: Long?) {
+            RuntimeProfile.requireAvailable()
+            sendMessageInternal(referer, chatId, msg, threadId)
+        }
+
+        fun sendImagesNow(room: Long, images: List<String>) {
+            RuntimeProfile.requireAvailable()
+            sendMediaInternal(room, images.map { decodeLegacyImage(it) })
+        }
+
         fun sendMessage(referer: String, chatId: Long, msg: String, threadId: Long?) {
             submitted.incrementAndGet()
             coroutineScope.launch {
