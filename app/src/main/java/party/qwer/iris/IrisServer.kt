@@ -13,6 +13,7 @@ import party.qwer.iris.features.reply.infrastructure.KakaoReplySenderAdapter
 import party.qwer.iris.features.reply.infrastructure.KakaoReplyCommitProbeAdapter
 import party.qwer.iris.model.ReplyRequest
 import party.qwer.iris.model.ReplyResponse
+import party.qwer.iris.model.toWire
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -219,7 +220,7 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                     receipt.kakaoLogId,
                     receipt.duplicate,
                     receipt.message,
-                ),
+                ).toWire(),
             )
         } catch (error: ReplyRequestConflictException) {
             call.respond(
