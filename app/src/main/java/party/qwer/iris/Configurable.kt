@@ -49,7 +49,8 @@ class Configurable {
             botIdResolved = resolved
         }
 
-        val CONFIG_FILE_PATH: String = System.getenv("IRIS_CONFIG_PATH") ?: DEFAULT_CONFIG_PATH
+        val CONFIG_FILE_PATH: String = RuntimeProfile.scope?.configPath
+            ?: System.getenv("IRIS_CONFIG_PATH") ?: DEFAULT_CONFIG_PATH
 
         init {
             loadConfig()

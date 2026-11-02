@@ -28,7 +28,8 @@ import party.qwer.iris.Replier.Companion.SendMessageRequest
 
 // SendMsg : ye-seola/go-kdb
 
-internal const val IMAGE_DIR_PATH = "/sdcard/Android/data/com.kakao.talk/files"
+internal val IMAGE_DIR_PATH: String
+    get() = RuntimeProfile.scope?.mediaPath ?: "/sdcard/Android/data/com.kakao.talk/files"
 
 class Replier {
     companion object {
@@ -83,6 +84,7 @@ class Replier {
                     for (request in messageChannel) {
                         try {
                             mutex.withLock {
+                                RuntimeProfile.requireAvailable()
                                 request.send()
                                 sent.incrementAndGet()
                                 delay(Configurable.messageSendRate)
@@ -167,6 +169,17 @@ class Replier {
             dispatchStartService(intent)
         }
 
+        /** Direct side effect used only by the bounded durable dispatcher. */
+        fun sendMessageNow(referer: String, chatId: Long, msg: String, threadId: Long?) {
+            RuntimeProfile.requireAvailable()
+            sendMessageInternal(referer, chatId, msg, threadId)
+        }
+
+        fun sendImagesNow(room: Long, images: List<String>) {
+            RuntimeProfile.requireAvailable()
+            sendMediaInternal(room, images.map { decodeLegacyImage(it) })
+        }
+
         fun sendMessage(referer: String, chatId: Long, msg: String, threadId: Long?) {
             submitted.incrementAndGet()
             coroutineScope.launch {
@@ -242,10 +255,20 @@ class Replier {
                 throw IOException("image dir not writable: ${IMAGE_DIR_PATH}")
             }
 
+            val profile = RuntimeProfile.scope
+            if (profile != null) {
+                android.system.Os.chown(picDir.absolutePath, profile.appUid, 1078)
+                android.system.Os.chmod(picDir.absolutePath, 0x1F8) // 0770, app-owned external data.
+            }
             val used = mutableSetOf<String>()
             val uris = items.map { item ->
                 val file = MediaPayload.writeTo(picDir, item, used)
-                val uri = Uri.fromFile(file)
+                val sharedFile = if (profile != null) {
+                    android.system.Os.chown(file.absolutePath, profile.appUid, 1078)
+                    android.system.Os.chmod(file.absolutePath, 0x1A0) // 0640, no world-readable grant.
+                    File(profile.mediaUriPath, file.name)
+                } else file
+                val uri = Uri.fromFile(sharedFile)
                 mediaScan(uri)
                 uri
             }

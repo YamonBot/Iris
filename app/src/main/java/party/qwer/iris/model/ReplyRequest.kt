@@ -13,5 +13,6 @@ data class ReplyRequest(
     val type: String = "text",
     val room: String,
     val data: JsonElement,
-    val threadId: String? = null
+    val threadId: String? = null,
+    val request_id: String? = null
 )

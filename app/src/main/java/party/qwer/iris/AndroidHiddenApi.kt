@@ -45,7 +45,7 @@ class AndroidHiddenApi {
          * UserHandle.myUserId() 는 hidden 이라 reflection, uid 가 루트(0)면 user 0.
          */
         private val currentUserId: Int by lazy {
-            runCatching {
+            RuntimeProfile.scope?.userId ?: runCatching {
                 Class.forName("android.os.UserHandle")
                     .getMethod("myUserId")
                     .invoke(null) as Int
@@ -334,6 +334,20 @@ class AndroidHiddenApi {
 
             println(errorMsg)
             throw Exception(errorMsg)
+        }
+
+        private val userManager by lazy {
+            val stub = Class.forName("android.os.IUserManager\$Stub")
+            stub.getMethod("asInterface", IBinder::class.java).invoke(null, getService("user"))
+        }
+
+        fun isUserUnlocked(userId: Int): Boolean = runCatching {
+            Class.forName("android.os.IUserManager")
+                .getMethod("isUserUnlocked", Int::class.javaPrimitiveType)
+                .invoke(userManager, userId) == true
+        }.getOrElse {
+            System.err.println("Iris profile unlock check failed: ${it.javaClass.simpleName}")
+            false
         }
 
         private fun getService(name: String): IBinder {

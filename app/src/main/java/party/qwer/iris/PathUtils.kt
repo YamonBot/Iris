@@ -51,10 +51,21 @@ object PathUtils {
         val resolved = resolve()
         cachedPath = resolved
         cachedAtMs = now
-        return resolved ?: cached
+        return if (RuntimeProfile.scope != null) resolved else resolved ?: cached
     }
 
     private fun resolve(): String? {
+        RuntimeProfile.scope?.let { profile ->
+            val directory = File(profile.dataPath)
+            if (!directory.isDirectory) return null
+            check(directory.canonicalPath == directory.absolutePath.trimEnd('/')) {
+                "Profile data path must not redirect to another user"
+            }
+            check(android.system.Os.stat(directory.path).st_uid == profile.appUid) {
+                "Profile data directory does not belong to the configured KakaoTalk UID"
+            }
+            return profile.dataPath
+        }
         val androidUid = sanitizedUid()
         val mirrorPath = if (androidUid != null)
             "/data_mirror/data_ce/null/$androidUid/com.kakao.talk/" else null
@@ -90,10 +101,14 @@ object PathUtils {
         "PathUtils{path=${cachedPath ?: "<unresolved>"} envUid=${System.getenv("KAKAOTALK_APP_UID")?.takeIf { it.isNotBlank() } ?: "<unset>"}}"
 
     /** 경로를 못 찾았을 때의 설명 (start-up/상태 로그에서 재사용). */
-    fun describeMissing(): String =
-        "PathUtils: KakaoTalk data path not found (env KAKAOTALK_APP_UID=" +
+    fun describeMissing(): String {
+        RuntimeProfile.scope?.let {
+            return "PathUtils: selected profile data is unavailable at ${it.dataPath}; primary-user fallback is disabled"
+        }
+        return "PathUtils: KakaoTalk data path not found (env KAKAOTALK_APP_UID=" +
             "${System.getenv("KAKAOTALK_APP_UID") ?: "<unset>"}, " +
             "checked /data_mirror/data_ce/null/<uid>/com.kakao.talk and /data/data/com.kakao.talk)"
+    }
 
     /**
      * ISSUE-40: 캐시된 경로를 버리고 다시 해석한다. 미러↔기본 트리 전환처럼 데이터 위치가
