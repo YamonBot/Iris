@@ -1,6 +1,7 @@
 package party.qwer.iris
 
 import android.annotation.SuppressLint
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
 import android.os.IBinder
@@ -110,9 +111,10 @@ class AndroidHiddenApi {
                 )
 
                 return { intent ->
-                    method.invoke(
+                    val started = method.invoke(
                         activityManager, null, intent, null, false, callingPackageName, null, currentUserId
-                    )
+                    ) as ComponentName?
+                    requireAndroidServiceStarted(started?.packageName, started?.className)
                 }
             } catch (_: Exception) {
             }
@@ -131,9 +133,10 @@ class AndroidHiddenApi {
                 )
 
                 return { intent ->
-                    method.invoke(
+                    val started = method.invoke(
                         activityManager, null, intent, null, false, callingPackageName, currentUserId
-                    )
+                    ) as ComponentName?
+                    requireAndroidServiceStarted(started?.packageName, started?.className)
                 }
             } catch (_: Exception) {
             }
