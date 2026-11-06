@@ -25,3 +25,15 @@ or claim that the running company/private Iris has this fix from source tests.
 
 Native engine reference:
 https://www.sqlite.org/pragma.html#pragma_query_only
+
+## Native startup owner
+
+The primary company daemon now also honors an explicitly configured
+`IRIS_EXPECTED_BOT_ID` before starting senders, observers or HTTP. The personal
+profile reuses the same owner check. A malformed owner or a different resolved
+account exits78 so the Android init entrypoint can stop only that service.
+An unresolved account remains a transient failure and starts no workers.
+Legacy primary launchers without the owner setting keep their existing behavior.
+The native runtime bootstrap passes the company owner explicitly rather than
+inheriting a secondary-profile environment. This capability requires a new APK;
+the deployed4fd5666 artifact does not gain it from a shell/configuration change.
