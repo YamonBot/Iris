@@ -14,7 +14,7 @@ internal data class AndroidProfile(val userId: Int, val appUid: Int, val expecte
     val port = 3000 + userId
 
     fun requireOwner(actualBotId: Long) {
-        check(actualBotId == expectedBotId) { "KakaoTalk account does not match the configured profile owner" }
+        party.qwer.iris.features.security.application.requireConfiguredOwner(expectedBotId.toString(), actualBotId)
     }
 
     companion object {
