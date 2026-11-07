@@ -15,13 +15,19 @@ import party.qwer.iris.model.ApiResponse
 import party.qwer.iris.model.ChatIdentityResponse
 import party.qwer.iris.model.CommonErrorResponse
 
+private val nativeRoomCoordinate = Regex("-?[1-9][0-9]*")
+
+/** Preserve signed native room IDs; actor and message IDs use their own domains. */
+internal fun parseNativeRoomId(raw: String?): Long? =
+    raw?.takeIf { nativeRoomCoordinate.matches(it) }?.toLongOrNull()
+
 /** Preserve the existing authenticated Room API read protocol on current upstream. */
 internal fun Route.mcpReadRoutes(database: KakaoDB) {
     val images = KakaoImageSource(database)
     val slots = Semaphore(2)
     get("/healthz") { call.respond(ApiResponse(true, "healthy")) }
     get("/identity/{chatId}/{userId}") {
-        val room = call.parameters["chatId"]?.toLongOrNull()?.takeIf { it > 0 }
+        val room = parseNativeRoomId(call.parameters["chatId"])
         val actor = call.parameters["userId"]?.toLongOrNull()?.takeIf { it > 0 }
         if (room == null || actor == null) {
             return@get call.respond(HttpStatusCode.BadRequest, CommonErrorResponse(message = "invalid identity"))
