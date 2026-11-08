@@ -2,13 +2,24 @@
 
 ## 필요 환경
 * JDK 17 (JDK 20+ 는 Kotlin/KAPT 툴체인과 맞지 않습니다)
-* Android SDK (`local.properties` 의 `sdk.dir` 로 지정)
+* Android SDK (`ANDROID_HOME` 환경 변수 또는 `local.properties`의 `sdk.dir`로 지정)
 * 별도 jar 다운로드 불필요 — hidden API 는 전부 `java.lang.reflect` 로 런타임에 얻습니다.
 
 ## 빌드
 ```shell
 ./gradlew :app:assembleDebug
 ```
+다른 장비에서는 기존 JDK·SDK 경로를 명시해 같은 테스트와 APK 빌드를 실행할 수 있습니다.
+프로젝트에 장비별 절대 경로를 커밋하지 않습니다.
+
+```shell
+JAVA_HOME=/path/to/jdk17 ANDROID_HOME=/path/to/android-sdk \
+  ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon --max-workers=2
+```
+
+SDK와 Gradle 의존성이 이미 준비된 환경에서는 `--offline`을 추가하면 다운로드 없이 검증합니다.
+`SDK location not found`는 SDK 미설치뿐 아니라 경로 미설정일 때도 발생하므로 기존 설치부터 확인합니다.
+
 산출물은 `output/Iris-debug.apk` 에 복사됩니다. `libsqlcipher.so` 가 `lib/arm64-v8a/` 와 `lib/x86_64/` 에 함께 들어갑니다.
 
 ## 실행 (root 가 이미 잡혀 있어야 합니다)
