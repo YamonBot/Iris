@@ -12,14 +12,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,7 +31,7 @@ internal val IMAGE_DIR_PATH: String
 
 class Replier {
     companion object {
-        private val messageChannel = Channel<SendMessageRequest>(Channel.UNLIMITED)
+        private val messageQueue = LegacyReplyQueue<SendMessageRequest>()
         private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         @Volatile private var messageSenderJob: Job? = null
         private val mutex = Mutex()
@@ -44,12 +42,8 @@ class Replier {
         @Volatile
         private var running = false
 
-        /** pendingobservability: submitted 는 enqueue 성공, sent 는 consumer 통과. */
-        private val submitted = AtomicLong()
-        private val sent = AtomicLong()
-
-        /** 보내지지 않은 채 채널에 남아있는 요청 수 (재시작 churn 진단용). */
-        val pendingCount: Long get() = (submitted.get() - sent.get()).coerceAtLeast(0)
+        /** 대기·처리 중인 legacy 요청 수. 성공·실패 모두 처리 종료 시 제외한다. */
+        val pendingCount: Long get() = messageQueue.pendingCount
 
         /** sender 가 실제로 도는 중인가 — stop hook 에서 확인 가능한 상태. */
         val isRunning: Boolean get() = running
@@ -81,16 +75,17 @@ class Replier {
                 }
                 running = true
                 messageSenderJob = coroutineScope.launch {
-                    for (request in messageChannel) {
+                    for (request in messageQueue.channel) {
                         try {
                             mutex.withLock {
                                 RuntimeProfile.requireAvailable()
                                 request.send()
-                                sent.incrementAndGet()
                                 delay(Configurable.messageSendRate)
                             }
                         } catch (e: Exception) {
                             System.err.println("Error sending message from channel: $e")
+                        } finally {
+                            messageQueue.complete()
                         }
                     }
                 }
@@ -181,37 +176,22 @@ class Replier {
         }
 
         fun sendMessage(referer: String, chatId: Long, msg: String, threadId: Long?) {
-            submitted.incrementAndGet()
-            coroutineScope.launch {
-                messageChannel.send(SendMessageRequest {
-                    sendMessageInternal(
-                        referer, chatId, msg, threadId
-                    )
-                })
-            }
+            messageQueue.enqueue(SendMessageRequest {
+                sendMessageInternal(referer, chatId, msg, threadId)
+            })
         }
 
 
         fun sendPhoto(room: Long, base64ImageDataString: String) {
-            submitted.incrementAndGet()
-            coroutineScope.launch {
-                messageChannel.send(SendMessageRequest {
-                    sendMediaInternal(
-                        room, listOf(decodeLegacyImage(base64ImageDataString))
-                    )
-                })
-            }
+            messageQueue.enqueue(SendMessageRequest {
+                sendMediaInternal(room, listOf(decodeLegacyImage(base64ImageDataString)))
+            })
         }
 
         fun sendMultiplePhotos(room: Long, base64ImageDataStrings: List<String>) {
-            submitted.incrementAndGet()
-            coroutineScope.launch {
-                messageChannel.send(SendMessageRequest {
-                    sendMediaInternal(
-                        room, base64ImageDataStrings.map { decodeLegacyImage(it) }
-                    )
-                })
-            }
+            messageQueue.enqueue(SendMessageRequest {
+                sendMediaInternal(room, base64ImageDataStrings.map { decodeLegacyImage(it) })
+            })
         }
 
         /**
@@ -220,12 +200,7 @@ class Replier {
          * "파일명이 보여야 한다" 의 구현이다.
          */
         fun sendMedia(room: Long, items: List<MediaItem>) {
-            submitted.incrementAndGet()
-            coroutineScope.launch {
-                messageChannel.send(SendMessageRequest {
-                    sendMediaInternal(room, items)
-                })
-            }
+            messageQueue.enqueue(SendMessageRequest { sendMediaInternal(room, items) })
         }
 
         /**

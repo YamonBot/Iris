@@ -324,6 +324,10 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                 }
                 install(ContentNegotiation) { json(lenientJson) }
                 install(StatusPages) {
+                    exception<ReplyQueueFullException> { call, cause ->
+                        call.respond(HttpStatusCode.ServiceUnavailable,
+                            CommonErrorResponse(message = cause.message ?: "reply queue is full"))
+                    }
                     exception<Throwable> { call, cause ->
                         call.respond(
                             HttpStatusCode.InternalServerError,
@@ -379,29 +383,35 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                         }
                         val roomId = req.room
 
-                        when (req.type) {
-                            "text" -> handleTextReply(roomId, req.data.jsonPrimitive.content, req.threadId)
-                            "image", "image_multiple" ->
-                                handleMediaReply(roomId, MediaPayload.parseImages(req.data))
-                            "media", "video", "audio", "file" -> {
-                                val kind = when (req.type) {
-                                    "video" -> MediaKind.VIDEO
-                                    "audio" -> MediaKind.AUDIO
-                                    else -> MediaKind.FILE
+                        try {
+                            when (req.type) {
+                                "text" -> handleTextReply(roomId, req.data.jsonPrimitive.content, req.threadId)
+                                "image", "image_multiple" ->
+                                    handleMediaReply(roomId, MediaPayload.parseImages(req.data))
+                                "media", "video", "audio", "file" -> {
+                                    val kind = when (req.type) {
+                                        "video" -> MediaKind.VIDEO
+                                        "audio" -> MediaKind.AUDIO
+                                        else -> MediaKind.FILE
+                                    }
+                                    val item = MediaPayload.parseSingle(req.data, kind)
+                                    if (item == null) {
+                                        call.respond(ApiResponse(success = false, message = "Invalid media payload"))
+                                        return@post
+                                    }
+                                    handleMediaReply(roomId, listOf(item))
                                 }
-                                val item = MediaPayload.parseSingle(req.data, kind)
-                                if (item == null) {
-                                    call.respond(ApiResponse(success = false, message = "Invalid media payload"))
+                                else -> {
+                                    call.respond(
+                                        ApiResponse(success = false, message = "Unknown reply type: ${req.type}")
+                                    )
                                     return@post
                                 }
-                                handleMediaReply(roomId, listOf(item))
                             }
-                            else -> {
-                                call.respond(
-                                    ApiResponse(success = false, message = "Unknown reply type: ${req.type}")
-                                )
-                                return@post
-                            }
+                        } catch (error: IllegalArgumentException) {
+                            call.respond(HttpStatusCode.BadRequest,
+                                CommonErrorResponse(message = error.message ?: "invalid reply request"))
+                            return@post
                         }
                         call.respond(ApiResponse(success = true, message = "Enqueued"))
                     }
@@ -992,36 +1002,16 @@ class IrisServer(private val kakaoDB: KakaoDB) {
      * 브로드캐스트하지 않고 로그만 남긴다.
      */
     private fun handleTextReply(roomId: String, text: String, threadId: String?) {
-        val referer = notificationReferer
-        serverScope.launch {
-            try {
-                val chatId = roomId.toLongOrNull()
-                if (chatId != null) {
-                    Replier.sendMessage(referer, chatId, text, threadId?.toLongOrNull())
-                }
-                val safeText = text.replace("\n", "\\n")
-                println("IrisServer: text reply sent room=$roomId len=${safeText.length}")
-            } catch (e: Exception) {
-                System.err.println("IrisServer Replier error: ${e.message}")
-                e.printStackTrace()
-            }
-        }
+        val chatId = requireNativeRoomId(roomId)
+        val thread = threadId?.toLong()?.also { require(it > 0) }
+        Replier.sendMessage(notificationReferer, chatId, text, thread)
+        println("IrisServer: text reply enqueued room=$roomId len=${text.length}")
     }
 
     /** image / image_multiple 답장. */
     private fun handleMediaReply(roomId: String, items: List<MediaItem>) {
-        serverScope.launch {
-            try {
-                val chatId = roomId.toLongOrNull()
-                if (chatId != null) {
-                    Replier.sendMedia(chatId, items)
-                }
-                println("IrisServer: media reply sent room=$roomId count=${items.size}")
-            } catch (e: Exception) {
-                System.err.println("IrisServer Replier media error: ${e.message}")
-                e.printStackTrace()
-            }
-        }
+        Replier.sendMedia(requireNativeRoomId(roomId), items)
+        println("IrisServer: media reply enqueued room=$roomId count=${items.size}")
     }
 
     /**

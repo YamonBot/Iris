@@ -73,6 +73,13 @@ payloads, and reconciles interrupted attempts without sending them again.
 
 The receipt confirms a matching local Kakao database row, not recipient delivery.
 Legacy requests without `request_id` retain their existing `Enqueued` response;
-they do not acquire durability guarantees. Durable replies support text and
+they do not acquire durability guarantees. Admission is synchronous and bounded
+to four queued requests plus one executing request per Iris process. A full
+legacy queue returns HTTP 503 rather than creating suspended producers or
+claiming success. Invalid room/thread coordinates return HTTP 400. Logs say
+`enqueued`, not `sent`; the legacy response is not a Kakao commit receipt.
+Completed failures leave the pending count as well. This limit bounds queued
+work, not total HTTP parsing buffers or durable-dispatcher memory.
+Durable replies support text and
 single/grouped raster images. Device acceptance and shared Room API/MCP write
 tools remain separate release gates.
