@@ -173,9 +173,7 @@ class IrisServer(private val kakaoDB: KakaoDB) {
 
     private suspend fun replyDurably(call: ApplicationCall, replyRequest: ReplyRequest) {
         val command = try {
-            val roomId = replyRequest.room.toLong().also {
-                require(it > 0) { "room must be a positive integer" }
-            }
+            val roomId = requireNativeRoomId(replyRequest.room)
             val threadId = replyRequest.threadId?.toLong()?.also {
                 require(it > 0) { "threadId must be a positive integer" }
             }
