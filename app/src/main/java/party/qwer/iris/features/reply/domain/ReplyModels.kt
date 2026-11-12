@@ -25,6 +25,11 @@ data class ReplyCommand(
     val threadId: Long?,
     val payload: ReplyPayload,
 ) {
+    init {
+        require(roomId != 0L) { "room must be nonzero" }
+        require(threadId == null || threadId > 0L) { "threadId must be positive" }
+    }
+
     /** Stable payload fingerprint used to reject request-id reuse. */
     fun fingerprint(): String {
         val payloadText = when (payload) {

@@ -21,7 +21,7 @@ internal fun Route.mcpReadRoutes(database: KakaoDB) {
     val slots = Semaphore(2)
     get("/healthz") { call.respond(ApiResponse(true, "healthy")) }
     get("/identity/{chatId}/{userId}") {
-        val room = call.parameters["chatId"]?.toLongOrNull()?.takeIf { it > 0 }
+        val room = parseNativeRoomId(call.parameters["chatId"])
         val actor = call.parameters["userId"]?.toLongOrNull()?.takeIf { it > 0 }
         if (room == null || actor == null) {
             return@get call.respond(HttpStatusCode.BadRequest, CommonErrorResponse(message = "invalid identity"))

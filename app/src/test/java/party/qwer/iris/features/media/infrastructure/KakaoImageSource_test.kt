@@ -7,6 +7,18 @@ import kotlin.test.assertFailsWith
 
 class KakaoImageSourceTest {
     @Test
+    fun `OpenChat image bit uses the same attachment parser without accepting other types`() {
+        val single = """{"url":"https://talk.kakaocdn.net/a","mt":"image/png","s":10}"""
+        assertEquals(selectImageAttachment("2", single, 0), selectImageAttachment("16386", single, 0))
+        val grouped = """{"imageUrls":["https://talk.kakaocdn.net/a"],"mtl":["image/png"],"sl":[10]}"""
+        assertEquals(selectImageAttachment("27", grouped, 0), selectImageAttachment("16411", grouped, 0))
+        for (type in listOf(null, "invalid", "16385", "32770", "-1")) {
+            assertFailsWith<IllegalArgumentException> { selectImageAttachment(type, single, 0) }
+        }
+        assertFailsWith<IllegalArgumentException> { selectImageAttachment("16386", single, 1) }
+    }
+
+    @Test
     fun `Kakao JPG alias matches JPEG without allowing other formats`() {
         assertEquals("image/jpeg", canonicalImageType("image/jpg"))
         assertEquals("image/jpeg", canonicalImageType(" IMAGE/JPG; charset=binary "))

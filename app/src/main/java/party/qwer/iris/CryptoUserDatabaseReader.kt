@@ -136,5 +136,5 @@ object CryptoUserDatabaseReader {
             emptyMap()
         }
 
-    fun close() = snapshot.close()
+    fun close() { snapshot.close() }
 }

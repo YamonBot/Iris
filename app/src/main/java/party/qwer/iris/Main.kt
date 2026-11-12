@@ -14,6 +14,7 @@ class Main {
     companion object {
         @JvmStatic
         fun main(args: Array<String>) {
+            val expectedOwner = System.getenv("IRIS_EXPECTED_BOT_ID")
             val profile = try {
                 RuntimeProfile.scope
             } catch (error: IllegalArgumentException) {
@@ -53,6 +54,9 @@ class Main {
                 if (profile != null) {
                     profile.requireOwner(kakaoDb.botUserId)
                     RuntimeProfile.session = profile.sessionGuard(kakaoDb)
+                } else {
+                    party.qwer.iris.features.security.application.requireConfiguredOwner(
+                        expectedOwner, kakaoDb.botUserId)
                 }
 
                 Replier.startMessageSender()
@@ -98,10 +102,13 @@ class Main {
 
                 // 메인 스레드에서 블록 — app_process 프로세스가 종료되지 않도록
                 Thread.sleep(Long.MAX_VALUE)
+            } catch (e: party.qwer.iris.features.security.application.AccountOwnerMismatch) {
+                System.err.println("Iris account configuration rejected: ${e.message}")
+                kotlin.system.exitProcess(78)
             } catch (e: Exception) {
                 System.err.println("Iris Error")
                 e.printStackTrace()
-                if (profile != null) kotlin.system.exitProcess(1)
+                if (profile != null || expectedOwner != null) kotlin.system.exitProcess(1)
             }
         }
     }

@@ -2,9 +2,12 @@ package party.qwer.iris
 
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 import java.io.File
+import java.io.EOFException
 import java.io.RandomAccessFile
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /**
  * Shared snapshot machinery for the SQLCipher readers (crypto_database /
@@ -56,20 +59,20 @@ internal class CryptoDbSnapshot(
         var attempt = 0
         while (attempt < 2) {
             attempt++
-            if (stale()) refresh(keyProvider)
+            if (stale() && refresh(keyProvider) == null) return null
             if (db == null) return null
-            rw.readLock().lock()
             try {
-                val current = db ?: return null
-                return block(current)
+                return rw.read {
+                    val current = db ?: return null
+                    block(current)
+                }
             } catch (e: Exception) {
                 // A concurrent close/refresh can still win the race against the handle we
                 // just read. Discard the snapshot once and retry; a second failure propagates.
                 if (attempt > 1) throw e
                 System.err.println("$label: query failed (${e.javaClass.simpleName}: ${e.message}) — refreshing snapshot")
-                close()
-            } finally {
-                rw.readLock().unlock()
+                // The read lease has ended before close() takes the write lock.
+                if (!close()) return null
             }
         }
         return null
@@ -78,27 +81,35 @@ internal class CryptoDbSnapshot(
     /** Opens the snapshot without running a query (kept for `open()`-style callers). */
     fun ensure(keyProvider: () -> ByteArray?): Boolean {
         if (!stale()) return db != null
-        refresh(keyProvider)
-        return db != null
+        return refresh(keyProvider) != null
     }
 
     /** Drop the snapshot; the next use() re-derives the key and re-copies. */
-    fun close() {
+    fun close(): Boolean {
         refreshLock.lock()
         try {
             rw.writeLock().lock()
             try {
-                db?.close()
-            } catch (t: Throwable) {
-                System.err.println("$label: close failed: $t")
-            } finally {
-                db = null
-                openedAtMs = 0
                 copiedSourceMtime = 0
+                return closeSnapshot()
+            } finally {
                 rw.writeLock().unlock()
             }
         } finally {
             refreshLock.unlock()
+        }
+    }
+
+    /** Both callers hold refreshLock and the write lease; failed handles stay owned. */
+    private fun closeSnapshot(): Boolean {
+        openedAtMs = 0
+        return try {
+            db?.close()
+            db = null
+            true
+        } catch (e: Exception) {
+            System.err.println("$label: cannot close the prior snapshot: $e")
+            false
         }
     }
 
@@ -116,34 +127,27 @@ internal class CryptoDbSnapshot(
                 System.err.println("$label: key derivation failed: $it")
                 return null
             } ?: return null
-            val workFile = copyToWorkingCopy() ?: return null
-            val opened = try {
-                SQLiteDatabase.openDatabase(
-                    workFile.absolutePath, key, null,
-                    SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS,
-                    null
-                )
-            } catch (e: Throwable) {
-                // Most likely a rotated-out key ("file is not a database") — say so, the
-                // message that used to appear here was indistinguishable from a missing file.
-                System.err.println("$label: open failed (key mismatch or unreadable db): $e")
-                return null
-            }
-            // ISSUE-32: wrong key 와 corrupted file 이 모두 "file is not a database" 로 나온다.
-            // catalog 를 읽어 미리 판별하면 이후 caller 질의가 이상한 오류로 헤매는 대신
-            // "this key does not open it" 로그에 남는다.
-            if (!verifyReadable(opened, workFile)) {
-                runCatching { opened.close() }
-                return null
-            }
-            rw.writeLock().lock()
-            try {
-                runCatching { db?.close() }
+            return rw.write {
+                // No reader or open SQLCipher handle may observe files being replaced or swept.
+                if (!closeSnapshot()) return@write null
+                val workFile = copyToWorkingCopy() ?: return@write null
+                val opened = try {
+                    SQLiteDatabase.openDatabase(
+                        workFile.absolutePath, key, null,
+                        SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS,
+                        null
+                    )
+                } catch (e: Throwable) {
+                    System.err.println("$label: open failed (key mismatch or unreadable db): $e")
+                    return@write null
+                }
+                if (!verifyReadable(opened, workFile)) {
+                    runCatching { opened.close() }
+                    return@write null
+                }
                 db = opened
                 openedAtMs = System.currentTimeMillis()
-                return opened
-            } finally {
-                rw.writeLock().unlock()
+                opened
             }
         } finally {
             refreshLock.unlock()
@@ -175,6 +179,7 @@ internal class CryptoDbSnapshot(
             }
             dstMain
         } catch (e: Throwable) {
+            copiedSourceMtime = 0
             System.err.println("$label: copyToWorkingCopy failed: $e")
             null
         }
@@ -257,7 +262,7 @@ internal class CryptoDbSnapshot(
                 var pos = 0L
                 while (pos < size) {
                     val n = raf.read(buf, 0, minOf(buf.size.toLong(), size - pos).toInt())
-                    if (n <= 0) break
+                    if (n <= 0) throw EOFException("Source changed during snapshot copy")
                     out.write(buf, 0, n)
                     pos += n
                 }

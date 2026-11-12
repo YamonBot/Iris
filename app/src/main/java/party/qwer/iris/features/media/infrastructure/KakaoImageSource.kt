@@ -43,13 +43,14 @@ internal data class ImageAttachment(val url: String, val contentType: String, va
 internal fun selectImageAttachment(type: String?, raw: String, index: Int): ImageAttachment {
     require(index in 0..29) { "invalid image index" }
     val attachment = Json.parseToJsonElement(raw).jsonObject
-    if (type == "2") {
+    val baseType = type?.toIntOrNull()?.let(party.qwer.iris.KakaoMessageType::baseType)
+    if (baseType == 2) {
         require(index == 0) { "single image index must be zero" }
         return ImageAttachment(attachment["url"]?.jsonPrimitive?.content.orEmpty(),
             attachment["mt"]?.jsonPrimitive?.content.orEmpty(),
             attachment["s"]?.jsonPrimitive?.longOrNull ?: -1)
     }
-    require(type == "27") { "chat log is not a supported image" }
+    require(baseType == 27) { "chat log is not a supported image" }
     val urls = attachment["imageUrls"]?.jsonArray
         ?: throw IllegalArgumentException("missing grouped images")
     val types = attachment["mtl"]?.jsonArray

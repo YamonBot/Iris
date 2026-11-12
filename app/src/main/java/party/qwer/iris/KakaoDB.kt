@@ -11,6 +11,7 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import party.qwer.iris.Configurable
+import party.qwer.iris.features.security.application.requireReadQuery
 
 class KakaoDB {
     lateinit var connection: SQLiteDatabase
@@ -43,6 +44,9 @@ class KakaoDB {
             db.execSQL(attachStatement(root, "KakaoTalk.db", "db1"))
             db.execSQL(attachStatement(root, "KakaoTalk2.db", "db2"))
             db.execSQL(attachStatement(root, "multi_profile_database.db", "db3"))
+            // Public queries cannot write attached data. Profile attachment is
+            // performed above from the validated startup scope, never API SQL.
+            db.execSQL("PRAGMA query_only = ON")
         } catch (e: SQLiteException) {
             runCatching { db.close() }
             val dir = dbPathOf(root)
@@ -617,6 +621,7 @@ class KakaoDB {
     fun executeQuery(
         sqlQuery: String, bindArgs: Array<String?>?
     ): List<Map<String, String?>> {
+        requireReadQuery(sqlQuery)
         warnIfPathDrifted()
         val resultList: MutableList<Map<String, String?>> = ArrayList()
         connection.rawQuery(sqlQuery, bindArgs).use { cursor ->
