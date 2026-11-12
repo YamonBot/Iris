@@ -5,6 +5,7 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
 
 /**
  * Shared snapshot machinery for the SQLCipher readers (crypto_database /
@@ -58,18 +59,18 @@ internal class CryptoDbSnapshot(
             attempt++
             if (stale()) refresh(keyProvider)
             if (db == null) return null
-            rw.readLock().lock()
             try {
-                val current = db ?: return null
-                return block(current)
+                return rw.read {
+                    val current = db ?: return null
+                    block(current)
+                }
             } catch (e: Exception) {
                 // A concurrent close/refresh can still win the race against the handle we
                 // just read. Discard the snapshot once and retry; a second failure propagates.
                 if (attempt > 1) throw e
                 System.err.println("$label: query failed (${e.javaClass.simpleName}: ${e.message}) — refreshing snapshot")
+                // The read lease has ended before close() takes the write lock.
                 close()
-            } finally {
-                rw.readLock().unlock()
             }
         }
         return null
