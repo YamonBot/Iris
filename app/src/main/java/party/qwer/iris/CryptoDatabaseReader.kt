@@ -92,5 +92,5 @@ object CryptoDatabaseReader {
      *  for API symmetry with CryptoUserDatabaseReader — always null). */
     fun queryUserName(userId: Long): String? = null
 
-    fun close() = snapshot.close()
+    fun close() { snapshot.close() }
 }
