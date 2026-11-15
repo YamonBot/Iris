@@ -36,6 +36,9 @@ internal fun detectedImageType(bytes: ByteArray): String? = when {
 /** Validated image bytes resolved from one Kakao image chat-log row. */
 data class KakaoImage(val contentType: String, val bytes: ByteArray)
 
+/** Permanent CDN absence is distinct from malformed attachment metadata. */
+class KakaoImageGone : IllegalStateException("Kakao image is no longer available")
+
 /** Normalize one indexed attachment without accepting a URL from the caller. */
 internal data class ImageAttachment(val url: String, val contentType: String, val size: Long)
 
@@ -92,6 +95,7 @@ class KakaoImageSource(
 
         val request = Request.Builder().url(url).get().build()
         httpClient.newCall(request).execute().use { response ->
+            if (response.code == 410) throw KakaoImageGone()
             require(response.isSuccessful) { "Kakao image fetch failed: ${response.code}" }
             val responseType = response.header("Content-Type")?.let(::canonicalImageType)
             require(responseType == null || responseType == contentType) {

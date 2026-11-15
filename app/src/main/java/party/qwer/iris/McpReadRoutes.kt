@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import party.qwer.iris.features.media.infrastructure.KakaoImageSource
+import party.qwer.iris.features.media.infrastructure.KakaoImageGone
 import party.qwer.iris.model.ApiResponse
 import party.qwer.iris.model.ChatIdentityResponse
 import party.qwer.iris.model.CommonErrorResponse
@@ -45,6 +46,8 @@ internal fun Route.mcpReadRoutes(database: KakaoDB) {
         try {
             val image = slots.withPermit { withContext(Dispatchers.IO) { images.fetch(log, index) } }
             call.respondBytes(image.bytes, ContentType.parse(image.contentType))
+        } catch (_: KakaoImageGone) {
+            call.respond(HttpStatusCode.Gone, CommonErrorResponse(message = "image is no longer available"))
         } catch (_: NoSuchElementException) {
             call.respond(HttpStatusCode.NotFound, CommonErrorResponse(message = "image not found"))
         } catch (_: IllegalArgumentException) {
