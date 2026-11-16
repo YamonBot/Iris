@@ -16,6 +16,28 @@ import party.qwer.iris.features.reply.domain.*
 import party.qwer.iris.features.reply.infrastructure.FileReplyLedger
 
 class ReplyStatusTest {
+    @Test fun explicitExactReplayCanQualifyAnOldCommittedReceiptWithoutSending() = runBlocking {
+        val file = File.createTempFile("iris-qualified-receipt-", ".jsonl")
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val command = ReplyCommand(ReplyRequestId("old-committed"), 42, null,
+                ReplyPayload.Text("original-body"))
+            FileReplyLedger(file).save(ReplyRecord(command.requestId, command.fingerprint(),
+                ReplyStatus.KAKAO_DB_COMMITTED, 10, 11))
+            val dispatcher = ReplyDispatcher(KakaoReplySender { error("never send") },
+                object : KakaoReplyCommitProbe {
+                    override fun latestLogId(): Long = error("never probe")
+                    override suspend fun awaitOwnRow(command: ReplyCommand, afterLogId: Long): Long? =
+                        error("never probe")
+                }, FileReplyLedger(file), { 0 }, scope = scope)
+            assertNull(dispatcher.status(command.requestId, 42))
+            assertEquals(11L, dispatcher.dispatch(command).kakaoLogId)
+            assertEquals(11L, dispatcher.status(command.requestId, 42)?.kakaoLogId)
+            assertFalse(file.readText().contains("original-body"))
+            assertEquals(command.commitEvidence(), FileReplyLedger(file).find(command.requestId)?.commitEvidence)
+        } finally { scope.cancel(); file.delete() }
+    }
+
     @Test fun delayedCommitCanBeReadAfterRestartWithoutResendingOrLedgerWrites() = runBlocking {
         val file = File.createTempFile("iris-receipt-", ".jsonl")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

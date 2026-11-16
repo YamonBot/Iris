@@ -113,6 +113,9 @@ class ReplyDispatcher(
                 if (existing != null && existing.status !in setOf(
                         ReplyStatus.QUEUED, ReplyStatus.PROCESSING, ReplyStatus.KAKAO_DB_UNCONFIRMED)) {
                     terminal = existing.toReceipt(command, fingerprint)
+                    if (existing.commitEvidence == null) {
+                        ledger.save(existing.copy(commitEvidence = command.commitEvidence()))
+                    }
                     return@withLock
                 }
                 val receipt = CompletableDeferred<ReplyReceipt>()
