@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import party.qwer.iris.features.reply.domain.ReplyLedger
+import party.qwer.iris.features.reply.domain.ReplyCommitEvidence
 import party.qwer.iris.features.reply.domain.ReplyRecord
 import party.qwer.iris.features.reply.domain.ReplyRequestId
 import party.qwer.iris.features.reply.domain.ReplyStatus
@@ -20,6 +21,9 @@ class FileReplyLedger(private val file: File) : ReplyLedger {
         val baselineLogId: Long? = null,
         val kakaoLogId: Long? = null,
         val message: String? = null,
+        val commitRoomId: Long? = null,
+        val commitKind: String? = null,
+        val commitHashes: List<String>? = null,
     )
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -47,6 +51,9 @@ class FileReplyLedger(private val file: File) : ReplyLedger {
             record.baselineLogId,
             record.kakaoLogId,
             record.message,
+            record.commitEvidence?.roomId,
+            record.commitEvidence?.kind,
+            record.commitEvidence?.hashes,
         )
         FileOutputStream(file, true).use { output ->
             output.write((json.encodeToString(stored) + "\n").encodeToByteArray())
@@ -62,5 +69,8 @@ class FileReplyLedger(private val file: File) : ReplyLedger {
         baselineLogId,
         kakaoLogId,
         message,
+        if (commitRoomId == null && commitKind == null && commitHashes == null) null
+        else ReplyCommitEvidence(requireNotNull(commitRoomId), requireNotNull(commitKind),
+            requireNotNull(commitHashes)),
     )
 }

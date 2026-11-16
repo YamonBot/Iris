@@ -11,6 +11,7 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import party.qwer.iris.Configurable
+import java.security.MessageDigest
 
 class KakaoDB {
     lateinit var connection: SQLiteDatabase
@@ -72,8 +73,17 @@ class KakaoDB {
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
     }
 
-    /** First exact own-text row committed in a room after a sequence boundary. */
-    fun findOwnTextChatLogAfter(chatId: Long, afterLogId: Long, text: String): Long? {
+    /** First own-text row matching the retained digest after the send boundary. */
+    fun findOwnTextHashAfter(chatId: Long, afterLogId: Long, hash: String): Long? {
+        require(hash.matches(Regex("[a-f0-9]{64}")))
+        return ownTextChatLogsAfter(chatId, afterLogId).firstOrNull {
+            val message = it["message"] ?: return@firstOrNull false
+            MessageDigest.getInstance("SHA-256").digest(message.toByteArray())
+                .joinToString("") { byte -> "%02x".format(byte) } == hash
+        }?.get("_id")?.toLongOrNull()
+    }
+
+    private fun ownTextChatLogsAfter(chatId: Long, afterLogId: Long): Sequence<Map<String, String?>> {
         RuntimeProfile.requireAvailable()
         val rows = chatLogPages(afterLogId, latestChatLogId()) { cursor, throughId ->
             executeQuery(
@@ -88,9 +98,6 @@ class KakaoDB {
                     .getOrDefault(false)
             }
             .map(::decryptRow)
-            .firstOrNull { it["message"] == text }
-            ?.get("_id")
-            ?.toLongOrNull()
     }
 
     /** Own single or grouped image checksum evidence after the send boundary. */

@@ -14,6 +14,7 @@ import party.qwer.iris.features.reply.domain.ReplyCommand
 import party.qwer.iris.features.reply.domain.ReplyLedger
 import party.qwer.iris.features.reply.domain.ReplyReceipt
 import party.qwer.iris.features.reply.domain.ReplyRecord
+import party.qwer.iris.features.reply.domain.ReplyRequestId
 import party.qwer.iris.features.reply.domain.ReplyStatus
 
 /** Raised when a caller reuses a request id for another payload. */
@@ -41,6 +42,23 @@ class ReplyDispatcher(
     private val queue = Channel<Work>(queueCapacity)
     private val mutex = Mutex()
     private val inFlight = mutableMapOf<String, Pair<String, CompletableDeferred<ReplyReceipt>>>()
+
+    /** Read/reconcile a receipt. This path never queues work or calls the sender. */
+    suspend fun status(requestId: ReplyRequestId, roomId: Long): ReplyReceipt? = mutex.withLock {
+        val record = ledger.find(requestId) ?: return@withLock null
+        val evidence = record.commitEvidence ?: return@withLock null
+        if (evidence.roomId != roomId) return@withLock null
+        if (record.status in setOf(ReplyStatus.PROCESSING, ReplyStatus.KAKAO_DB_UNCONFIRMED)
+            && record.baselineLogId != null && requestId.value !in inFlight) {
+            val logId = commitProbe.findOwnRow(evidence, record.baselineLogId)
+            if (logId != null) {
+                val confirmed = record.copy(status = ReplyStatus.KAKAO_DB_COMMITTED,
+                    kakaoLogId = logId, message = null)
+                return@withLock confirmed.toReceipt().copy(duplicate = true)
+            }
+        }
+        record.toReceipt().copy(duplicate = true)
+    }
 
     init {
         scope.launch {
@@ -113,7 +131,8 @@ class ReplyDispatcher(
             try {
                 if (candidate.recovered == null) {
                     ledger.save(
-                        ReplyRecord(command.requestId, fingerprint, ReplyStatus.QUEUED)
+                        ReplyRecord(command.requestId, fingerprint, ReplyStatus.QUEUED,
+                            commitEvidence = command.commitEvidence())
                     )
                 }
                 candidate.ready.complete(Unit)
@@ -142,6 +161,7 @@ class ReplyDispatcher(
                 message = if (reconciledLogId == null)
                     "Recovered attempted reply has no commit evidence; not resent to avoid a duplicate"
                     else null,
+                commitEvidence = recovered.commitEvidence ?: command.commitEvidence(),
             )
             ledger.save(reconciled)
             return reconciled.toReceipt().copy(duplicate = true)
@@ -153,6 +173,7 @@ class ReplyDispatcher(
                 fingerprint,
                 ReplyStatus.PROCESSING,
                 baselineLogId = baseline,
+                commitEvidence = command.commitEvidence(),
             )
         )
         return try {
@@ -173,6 +194,7 @@ class ReplyDispatcher(
                 baselineLogId = baseline,
                 kakaoLogId = committedLogId,
                 message = message,
+                commitEvidence = command.commitEvidence(),
             )
             ledger.save(record)
             record.toReceipt()
@@ -183,6 +205,7 @@ class ReplyDispatcher(
                 ReplyStatus.SEND_FAILED,
                 baselineLogId = baseline,
                 message = error.message ?: error::class.java.simpleName,
+                commitEvidence = command.commitEvidence(),
             )
             ledger.save(record)
             record.toReceipt()

@@ -367,6 +367,29 @@ class IrisServer(private val kakaoDB: KakaoDB) {
                     }
 
                     // ── 답장 ───────────────────────────────────
+                    get("/reply/{requestId}") {
+                        call.response.headers.append(HttpHeaders.CacheControl, "no-store")
+                        val requestId = runCatching {
+                            ReplyRequestId(requireNotNull(call.parameters["requestId"]))
+                        }.getOrNull()
+                        val room = call.request.queryParameters["room"]?.toLongOrNull()
+                        if (requestId == null || room == null || room == 0L) {
+                            call.respond(HttpStatusCode.BadRequest,
+                                CommonErrorResponse(message = "valid request_id and room required"))
+                            return@get
+                        }
+                        RuntimeProfile.requireAvailable()
+                        val receipt = replyDispatcher.status(requestId, room)
+                        if (receipt == null) {
+                            call.respond(HttpStatusCode.NotFound,
+                                CommonErrorResponse(message = "reply receipt unavailable"))
+                            return@get
+                        }
+                        call.respond(ReplyResponse(receipt.success, receipt.requestId.value,
+                            receipt.status.wireValue, receipt.kakaoLogId, receipt.duplicate,
+                            receipt.message).toWire())
+                    }
+
                     post("/reply") {
                         val declaredLength = call.request.header(HttpHeaders.ContentLength)?.toLongOrNull()
                         if (declaredLength != null && declaredLength > MAX_REPLY_BODY_BYTES) {

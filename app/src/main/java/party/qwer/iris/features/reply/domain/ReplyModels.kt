@@ -25,6 +25,15 @@ data class ReplyCommand(
     val threadId: Long?,
     val payload: ReplyPayload,
 ) {
+    /** Content digests are sufficient for later confirmation; retain no plaintext or image bytes. */
+    fun commitEvidence(): ReplyCommitEvidence = when (val value = payload) {
+        is ReplyPayload.Text -> ReplyCommitEvidence(roomId, "text", listOf(sha256(value.value)))
+        is ReplyPayload.Images -> ReplyCommitEvidence(roomId, "images", value.base64Values.map {
+            MessageDigest.getInstance("SHA-1").digest(java.util.Base64.getDecoder().decode(it))
+                .joinToString("") { byte -> "%02x".format(byte) }
+        })
+    }
+
     /** Stable payload fingerprint used to reject request-id reuse. */
     fun fingerprint(): String {
         val payloadText = when (payload) {
@@ -37,6 +46,18 @@ data class ReplyCommand(
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray())
         .joinToString("") { "%02x".format(it) }
+}
+
+/** Immutable local commit expectation, scoped to the profile-owned reply ledger. */
+data class ReplyCommitEvidence(val roomId: Long, val kind: String, val hashes: List<String>) {
+    init {
+        require(roomId != 0L)
+        require(when (kind) {
+            "text" -> hashes.size == 1 && hashes.all { it.matches(Regex("[a-f0-9]{64}")) }
+            "images" -> hashes.size in 1..30 && hashes.all { it.matches(Regex("[a-f0-9]{40}")) }
+            else -> false
+        })
+    }
 }
 
 /** Evidence-backed state of an outbound reply. */
@@ -67,6 +88,7 @@ data class ReplyRecord(
     val baselineLogId: Long? = null,
     val kakaoLogId: Long? = null,
     val message: String? = null,
+    val commitEvidence: ReplyCommitEvidence? = null,
 )
 
 /** Durable request-id repository. */
@@ -82,6 +104,9 @@ fun interface KakaoReplySender {
 
 /** Kakao database commit-evidence port. */
 interface KakaoReplyCommitProbe {
+    /** One read, without waiting or sending. Legacy probes cannot confirm a durable expectation. */
+    fun findOwnRow(evidence: ReplyCommitEvidence, afterLogId: Long): Long? = null
+
     /** Return the newest local row that matches this exact command after the boundary. */
     suspend fun awaitOwnRow(command: ReplyCommand, afterLogId: Long): Long?
 
